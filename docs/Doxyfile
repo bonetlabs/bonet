@@ -1,0 +1,67 @@
+# Doxygen configuration for BONet.
+# Run from the repository root:  doxygen docs/Doxyfile
+# Output:                        docs/doxygen/html/index.html
+
+PROJECT_NAME           = "BONet"
+PROJECT_BRIEF          = "Verifier-friendly packet parsing and rewriting for eBPF"
+OUTPUT_DIRECTORY       = docs/doxygen
+
+# --- Inputs -----------------------------------------------------------------
+# Guide pages first (they set the page order), then the headers for the API
+# reference.
+INPUT                  = docs/mainpage.dox \
+                         docs/groups.dox \
+                         docs/guide \
+                         src/bnt_core.h \
+                         src/bnt_xdp.h \
+                         src/bnt_debug.h
+FILE_PATTERNS          = *.h *.dox
+RECURSIVE              = YES
+
+# The public API is identical across backends, so the reference is generated from
+# one backend (XDP) plus the shared core. The TC headers would only add duplicate
+# entries; the backend differences are covered in the guide. bnt_rw.h is internal.
+EXCLUDE                = src/bnt_rw.h
+
+# Hide the private parts of the public API: the __-prefixed view fields
+# (__ctx, __off) and every internal __bnt_* helper.
+EXCLUDE_SYMBOLS        = __* _bnt_*
+HIDE_UNDOC_MEMBERS     = YES
+HIDE_UNDOC_CLASSES     = YES
+INTERNAL_DOCS          = NO
+
+# --- C library tuning -------------------------------------------------------
+OPTIMIZE_OUTPUT_FOR_C  = YES
+EXTRACT_ALL            = NO
+EXTRACT_STATIC         = YES
+EXTRACT_PRIVATE        = NO
+JAVADOC_AUTOBRIEF      = YES
+QUIET                  = YES
+
+# --- Preprocessing ----------------------------------------------------------
+# Strip compiler attributes and resolve the backend context type so the view
+# typedefs and the static inline wrappers parse cleanly. BNT_CORE_INCLUDED is
+# predefined too: bnt_debug.h gates nearly all of its content behind
+# "#ifdef BNT_CORE_INCLUDED" (true only after bnt_core.h's own include guard
+# has run), which never happens when bnt_debug.h is parsed as a standalone
+# Doxygen input file; without this, doxygen sees none of its functions.
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = __always_inline= \
+                         "__attribute__(x)=" \
+                         BNT_CTX_TYPE=void \
+                         BNT_INLINE_ALL=1 \
+                         BNT_CORE_INCLUDED=1
+
+# --- Output -----------------------------------------------------------------
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_TREEVIEW      = YES
+SORT_MEMBER_DOCS       = NO
+HTML_COLORSTYLE        = TOGGLE
+DISABLE_INDEX          = YES
+FULL_SIDEBAR           = YES
+
+# No diagrams are used; do not require Graphviz.
+HAVE_DOT               = NO

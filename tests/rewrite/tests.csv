@@ -1,0 +1,14 @@
+# Getter/setter coverage. Some cases also verify delivery after checksum-updating rewrites.
+name,description,server_prog,server_type,server_egress_prog,server_egress_type,client_prog,client_type,proto,family,padded_payload,expected
+xdp_ipv4_udp_setters,XDP IPv4 TOS/TTL/ID plus UDP destination rewrite,xdp_ipv4_udp_setters.o,xdp,,,,,udp,4,false,map_status_ok_and_packet_reaches_port_8888
+tc_ipv6_udp_setters,TC IPv6 traffic class flow label hop limit payload len plus UDP destination rewrite,tc_ipv6_udp_setters.o,tc-ingress,,,,,udp,6,false,map_status_ok_and_packet_reaches_port_8888
+tc_tcp_field_setters_ipv4,TC TCP source seq ack flags window urgent setters,tc_tcp_field_setters_ipv4.o,tc-ingress,,,,,tcp,4,false,map_status_ok
+xdp_icmp4_echo_setters,XDP ICMPv4 echo id and sequence setters,xdp_icmp4_echo_setters.o,xdp,,,,,icmp4,4,false,map_status_ok
+tc_icmp6_echo_setters,TC ICMPv6 echo id and sequence setters,tc_icmp6_echo_setters.o,tc-ingress,,,,,icmp6,6,false,map_status_ok
+xdp_arp_setters,XDP ARP operation and target hardware address setters,xdp_arp_setters.o,xdp,,,,,arp,4,false,map_status_ok
+xdp_insert_mpls,XDP inserts MPLS label after Ethernet and verifies label via getter,xdp_insert_mpls.o,xdp,,,,,udp,4,false,map_status_ok
+tc_insert_mpls,TC inserts MPLS label after Ethernet and verifies label via getter,tc_insert_mpls.o,tc-ingress,,,,,udp,4,false,map_status_ok
+xdp_insert_srv6_encap,XDP inserts SRv6 H.Encaps header over IPv4 and explicit navigation reaches inner UDP,xdp_insert_srv6_encap.o,xdp,,,,,udp,4,false,map_status_ok
+tc_insert_srv6_encap,TC inserts SRv6 H.Encaps header over IPv4 and explicit navigation reaches inner UDP,tc_insert_srv6_encap.o,tc-ingress,,,,,udp,4,false,map_status_ok
+xdp_insert_srh,XDP inserts SRH into existing IPv6 packet and find_udp reaches UDP through SRH,xdp_insert_srh.o,xdp,,,,,udp,6,false,map_status_ok
+tc_insert_srh,TC inserts SRH into existing IPv6 packet and find_udp reaches UDP through SRH,tc_insert_srh.o,tc-ingress,,,,,udp,6,false,map_status_ok

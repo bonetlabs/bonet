@@ -1,0 +1,168 @@
+# BONet performance benchmark - paper profile.
+#
+# Runs the three paper-plot experiments (mmlf, static-dnat, srv6-encap) across
+# five cases (framework XDP, baseline XDP, framework TC, baseline TC, kernel)
+# with PDR settings suitable for reporting: 10 independent binary searches per
+# experiment, 5 kpps convergence window, 10 s TRex trials.
+#
+# To adapt to a different testbed, update every value under sut.ssh, network,
+# xdp, and tc. Everything else can stay as-is.
+
+sut:
+  mode: ssh
+  bonet_root: /path/to/bonet
+  sudo: true
+  settle_seconds: 1
+  ssh:
+    host: 192.0.2.10
+    user: benchmark
+    key: /path/to/ssh_key
+    port: 22
+
+trex:
+  server: 127.0.0.1
+  api_path: /opt/trex/v3.08/automation/trex_control_plane/interactive
+  tx_port: 0
+  rx_port: 1
+  duration: 10
+  warmup: 1
+  samples: 1
+  stats_settle_seconds: 1
+
+network:
+  # SUT interface receiving traffic from TRex tx_port.
+  sut_rx_iface: eth1
+  sut_rx_ipv4: 10.8.0.2
+  sut_rx_prefix: 24
+  sut_rx_mac: "02:00:00:00:01:02"
+  sut_rx_ipv6: "fd08::2"
+  sut_rx_ipv6_prefix: 64
+
+  # SUT interface sending forwarded traffic back to TRex rx_port.
+  sut_tx_iface: eth2
+  sut_tx_ipv4: 10.7.0.2
+  sut_tx_prefix: 24
+  sut_tx_mac: "02:00:00:00:02:02"
+  sut_tx_ipv6: "fd07::2"
+  sut_tx_ipv6_prefix: 64
+
+  # TRex tx_port. tg_tx_mac is used as source MAC in generated pcaps.
+  tg_tx_ipv4: 10.8.0.1
+  tg_tx_mac: "02:00:00:00:01:01"
+  tg_tx_ipv6: "fd08::1"
+
+  # TRex rx_port. The SUT installs a static neighbor for this address.
+  tg_rx_ipv4: 10.7.0.1
+  tg_rx_mac: "02:00:00:00:02:01"
+  tg_rx_ipv6: "fd07::1"
+
+  # Synthetic traffic parameters. traffic_src_ipv4 must match the blacklist
+  # entry hardcoded in the MMLF programs (10.8.0.1). traffic_dst_ipv4 is the
+  # route installed on the SUT and the IPIP tunnel endpoint; it is also the
+  # destination matched by the static-DNAT programs (48.0.0.2).
+  traffic_src_ipv4: 10.8.0.1
+  traffic_dst_ipv4: 48.0.0.2
+  traffic_dst_prefix: 24
+  traffic_ttl: 64
+  udp_src_port: 12345
+  udp_dst_port: 54321
+
+  # IPv6 synthetic traffic. traffic_src_ipv6 matches the blacklist entry
+  # hardcoded in MMLF6 programs (fd08::1). traffic_dst_ipv6 is the route
+  # target installed on the SUT and the destination matched by static-DNAT6
+  # (fd03::2 — outside fd07::/64 and fd08::/64 to avoid routing loops).
+  traffic_src_ipv6: "fd08::1"
+  traffic_dst_ipv6: "fd03::2"
+  traffic_dst_ipv6_prefix: 64
+
+  # Optional IRQ pinning — leave empty unless you have validated the
+  # IRQ-to-queue mapping on this SUT.
+  sut_rx_irq_min:
+  sut_rx_irq_max:
+  sut_rx_irq_core:
+  sut_tx_irq_min:
+  sut_tx_irq_max:
+  sut_tx_irq_core:
+
+xdp:
+  # Use xdpgeneric if the driver does not support native XDP.
+  mode: xdpdrv
+  section: xdp
+
+tc:
+  section: tc
+
+build:
+  enabled: true
+
+perf:
+  pcap_dir: pcap
+  output_dir: results
+
+cases:
+  - framework
+  - framework-inlined
+  - baseline
+  - framework-tc
+  - baseline-tc
+  - kernel
+
+experiments:
+  # Match-Mark-Lookup-Forward: classify src against a blacklist, mark TOS,
+  # FIB-lookup and forward. Traffic src (10.8.0.1) always hits the blacklist.
+  # Kernel case: iptables mangle TOS + kernel routing.
+  - name: mmlf-78-pdr
+    rate: pdr
+    frame_size: 78
+    runs: 10
+    starting_tx_rate_pps: 50000
+    max_tx_rate_pps: 3000000
+    ndr_window_pps: 5000
+    delivery_ratio: 0.995
+    objects:
+      framework: validation/framework/xdp_mmlf.o
+      framework-inlined: validation/framework_inlined/xdp_mmlf.o
+      baseline: validation/baseline/xdp_mmlf.o
+      framework-tc: validation/framework/tc_mmlf.o
+      baseline-tc: validation/baseline/tc_mmlf.o
+
+  # Static DNAT: rewrite dst 48.0.0.2 -> 10.7.0.1, update IP and UDP
+  # checksums, FIB-lookup and forward. UDP checksum is enabled so the full
+  # DNAT path is exercised on both eBPF cases.
+  # Kernel case: iptables nat PREROUTING (with conntrack).
+  - name: static-dnat-78-pdr
+    rate: pdr
+    frame_size: 78
+    runs: 10
+    starting_tx_rate_pps: 50000
+    max_tx_rate_pps: 3000000
+    ndr_window_pps: 5000
+    delivery_ratio: 0.995
+    traffic_udp_checksum: true
+    objects:
+      framework: validation/framework/xdp_static_dnat.o
+      framework-inlined: validation/framework_inlined/xdp_static_dnat.o
+      baseline: validation/baseline/xdp_static_dnat.o
+      framework-tc: validation/framework/tc_static_dnat.o
+      baseline-tc: validation/baseline/tc_static_dnat.o
+
+  # SRv6 H.Encaps: wrap IPv4 inner traffic in outer IPv6 + SRH, FIB6-lookup
+  # on outer dst (fd07::1) and forward. Inner pcap dst avoids a routing loop
+  # on the SUT. Kernel case: ip route encap seg6 mode encap.
+  - name: srv6-encap-78-pdr
+    rate: pdr
+    ip_version: srv6
+    frame_size: 78
+    runs: 10
+    starting_tx_rate_pps: 50000
+    max_tx_rate_pps: 3000000
+    ndr_window_pps: 5000
+    delivery_ratio: 0.995
+    pcap_dst_ipv4: 10.100.0.1
+    pcap_dst_prefix: 24
+    objects:
+      framework: validation/framework/xdp_srv6_encap.o
+      framework-inlined: validation/framework_inlined/xdp_srv6_encap.o
+      baseline: validation/baseline/xdp_srv6_encap.o
+      framework-tc: validation/framework/tc_srv6_encap.o
+      baseline-tc: validation/baseline/tc_srv6_encap.o

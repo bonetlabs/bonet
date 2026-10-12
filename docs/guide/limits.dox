@@ -1,0 +1,21 @@
+/**
+@page limits Limits
+
+BONet supports a bounded number of each stacked element, set by compile-time
+constants. Override one by defining it before the backend header:
+
+@code{.c}
+#define BNT_MAX_VLAN_DEPTH 4
+#include "bnt_xdp.h"
+@endcode
+
+| Constant                  | Default | Maximum                |
+| ------------------------- | ------- | ---------------------- |
+| @c BNT_MAX_VLAN_DEPTH     | 2       | VLAN tags              |
+| @c BNT_MAX_IPV6_EXT_DEPTH | 6       | IPv6 extension headers |
+| @c BNT_SRV6_MAX_SEGS      | 8       | SRH segments           |
+
+A stack deeper than its bound returns @c BNT_ERR_TOO_DEEP. Raising a bound covers
+deeper stacks at the cost of more verifier instructions; lowering one is cheaper
+but rejects deeper packets.
+*/

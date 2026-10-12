@@ -1,0 +1,18 @@
+# Parser and navigation coverage. Map-backed tests write bnt_test_result.
+name,description,server_prog,server_type,server_egress_prog,server_egress_type,client_prog,client_type,proto,family,padded_payload,expected
+xdp_vlan1_ipv4_udp,XDP parses single VLAN then IPv4/UDP,xdp_vlan1_ipv4_udp.o,xdp,,,,,vlan1-udp4,4,false,map_status_ok
+xdp_vlan2_ipv4_udp,XDP parses double VLAN then IPv4/UDP,xdp_vlan2_ipv4_udp.o,xdp,,,,,vlan2-udp4,4,false,map_status_ok
+xdp_ipv4_fragment,XDP parses L4 from first IPv4 fragments,xdp_ipv4_fragment.o,xdp,,,,,udp4-frag,4,false,map_status_ok
+xdp_ipv4_nonfirst_fragment,XDP rejects L4 navigation on non-first IPv4 fragments,xdp_ipv4_nonfirst_fragment.o,xdp,,,,,udp4-frag-nonfirst,4,false,map_status_ok
+xdp_ipv6_fragment,XDP parses L4 from first IPv6 fragments,xdp_ipv6_fragment.o,xdp,,,,,udp6-frag,6,false,map_status_ok
+xdp_ipv6_nonfirst_fragment,XDP rejects L4 navigation on non-first IPv6 fragments,xdp_ipv6_nonfirst_fragment.o,xdp,,,,,udp6-frag-nonfirst,6,false,map_status_ok
+xdp_ipv6_ext_icmp6,XDP walks one IPv6 extension header to ICMPv6,xdp_ipv6_ext_icmp6.o,xdp,,,,,ipv6-ext-icmp6,6,false,map_status_ok
+xdp_ipv6_too_deep,XDP reports IPv6 extension walk depth exhaustion,xdp_ipv6_too_deep.o,xdp,,,,,ipv6-too-deep,6,false,map_status_ok
+tc_ctx_find_udp_ipv4,TC ctx-level walker finds IPv4 UDP,tc_ctx_find_udp_ipv4.o,tc-ingress,,,,,udp,4,false,map_status_ok
+tc_next_header_tcp_ipv6,TC typed next_header macro walks IPv6 TCP,tc_next_header_tcp_ipv6.o,tc-ingress,,,,,tcp,6,false,map_status_ok
+xdp_find_mpls_label,XDP ctx-level find_mpls retrieves MPLS label from single-label stack,xdp_find_mpls_label.o,xdp,,,,,mpls1-udp4,4,false,map_status_ok
+xdp_find_udp_srv6encap,XDP explicit step-by-step navigation through SRv6 H.Encaps to inner IPv4 UDP,xdp_find_udp_srv6encap.o,xdp,,,,,srv6encap-udp4,6,false,map_status_ok
+tc_ctx_find_udp_ipv6,TC ctx-level find_udp finds IPv6 UDP,tc_ctx_find_udp_ipv6.o,tc-ingress,,,,,udp,6,false,map_status_ok
+tc_ctx_find_tcp_ipv4,TC ctx-level find_tcp finds IPv4 TCP,tc_ctx_find_tcp_ipv4.o,tc-ingress,,,,,tcp,4,false,map_status_ok
+tc_ctx_find_icmp4,TC ctx-level find_icmp4 finds IPv4 ICMP echo request,tc_ctx_find_icmp4.o,tc-ingress,,,,,icmp4,4,false,map_status_ok
+tc_ctx_find_icmp6,TC ctx-level find_icmp6 finds IPv6 ICMPv6 echo request,tc_ctx_find_icmp6.o,tc-ingress,,,,,icmp6,6,false,map_status_ok

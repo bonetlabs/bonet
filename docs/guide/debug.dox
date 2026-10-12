@@ -1,0 +1,33 @@
+/**
+@page debug Debugging
+
+@c bnt_debug.h adds per-header logging helpers on top of a backend. Include it
+after the backend header.
+
+@section debug_printk Trace output
+
+Each header type has a @c __printk helper that writes the header's fields to the
+kernel trace pipe, read with @c cat @c /sys/kernel/debug/tracing/trace_pipe:
+
+@code{.c}
+#include "bnt_xdp.h"
+#include "bnt_debug.h"
+
+bnt_eth eth;
+if (!bnt_eth__parse(ctx, 0, &eth))
+    bnt_dbg_eth__printk(&eth);
+@endcode
+
+@section debug_events Structured events
+
+Each header type also defines a typed event struct, @c bnt_dbg_<type>_event, and
+three helpers that produce it:
+
+- @c __fill_event populates the struct from a view.
+- @c __emit_ringbuf submits one event to a ring buffer.
+- @c __update_map stores the latest event under a map key.
+
+A ring buffer streams every event to user space; a map keeps only the most recent
+event per key. Numeric event fields are in host byte order, except addresses,
+which keep their network-order on-wire form.
+*/

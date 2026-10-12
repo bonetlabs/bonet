@@ -1,0 +1,4 @@
+# Debug helper coverage: fill_event, update_map, ringbuf and printk wrappers.
+name,description,server_prog,server_type,server_egress_prog,server_egress_type,client_prog,client_type,proto,family,padded_payload,expected
+xdp_debug_ipv4_udp,XDP debug helpers for Ethernet IPv4 UDP,xdp_debug_ipv4_udp.o,xdp,,,,,udp,4,false,map_status_ok
+tc_debug_arp,TC debug helpers for ARP events,tc_debug_arp.o,tc-ingress,,,,,arp,4,false,map_status_ok

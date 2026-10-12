@@ -1,0 +1,30 @@
+.direnv
+/build
+/.history
+/.vscode
+/tmp
+
+# Build artifacts
+*.o
+*.log
+
+# Local helper binaries
+bnt_examples/verify_load
+
+# Python virtual environments
+env/
+venv/
+.venv/
+plot_env/
+
+# Generated traffic and results
+validation/perf/traffic/generated/
+validation/perf_mpps/pcap/
+validation/perf_mpps/results/
+validation/macro_perf/pcap/
+validation/results/
+validation/softeng_perf/results/
+validation/plots/
+
+# Generated API reference
+docs/doxygen/

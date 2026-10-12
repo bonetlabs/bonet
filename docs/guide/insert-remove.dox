@@ -1,0 +1,35 @@
+/**
+@page headers_insert_remove Inserting and removing headers
+
+BONet can push or pop a VLAN tag or MPLS label, wrap the packet in an outer IPv4
+or IPv6 header, insert an SRH after an IPv6 header, and remove a base IPv4 or
+IPv6 header. Inserts are anchored on the Ethernet view, except the SRH, which is
+anchored on an IPv6 view.
+
+@code{.c}
+bnt_eth__insert_vlan(&eth, 0x8100, 100);
+bnt_eth__insert_ipv4(&eth, IPPROTO_IPIP, saddr, daddr);   /* outer encapsulation */
+@endcode
+
+@section headers_invalidation Re-parse after a change
+
+After an insert or remove, views for headers past the change are no longer valid;
+re-parse them before use. Views for headers before the change stay valid.
+
+@code{.c}
+SEC("xdp")
+int push_vlan(struct xdp_md *ctx)
+{
+    bnt_eth  eth;
+    bnt_ipv4 ip;
+
+    if (bnt_eth__parse(ctx, 0, &eth))            return XDP_DROP;
+    if (bnt_eth__insert_vlan(&eth, 0x8100, 100)) return XDP_DROP;
+
+    /* eth is before the change and stays valid; navigate again from it. */
+    if (bnt_eth__next_ipv4(&eth, &ip))           return XDP_DROP;
+
+    return XDP_PASS;
+}
+@endcode
+*/

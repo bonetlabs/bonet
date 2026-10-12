@@ -1,0 +1,4 @@
+*.bpf.o
+xdp_drop_telnet_debug_map
+xdp_drop_telnet_debug_printk
+xdp_drop_telnet_debug_ringbuf

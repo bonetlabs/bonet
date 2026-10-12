@@ -1,0 +1,30 @@
+/**
+@page build_modes Build modes
+
+BONet builds in one of two modes, chosen at build time. They trade runtime cost
+against a verification guarantee.
+
+@section build_modes_default Default mode
+
+The default mode is the safe choice for the verifier: every BONet operation is
+guaranteed to pass verification regardless of the program it sits in, so BONet is
+never the reason a program is rejected. It adds about 10% of runtime overhead
+over plain BPF.
+
+Develop and debug in this mode.
+
+@section build_modes_perf Performance mode
+
+Set @c BNT_INLINE_ALL=1 to trade the guarantee for speed. It removes most of the
+overhead, but verification then may depend on the surrounding program.
+
+Once a program is stable, switching to @c BNT_INLINE_ALL is worth trying for the
+lower overhead; be ready to revert if it no longer verifies.
+
+@section build_modes_legacy Legacy kernels
+
+Kernels without BPF global subprograms, roughly those before 5.6, cannot use the
+default mode. Set @c BNT_LEGACY_KERNEL=1 for them: it forces @c BNT_INLINE_ALL
+and adds the barriers needed to verify there. It must be set explicitly, since
+the build cannot detect the target kernel.
+*/

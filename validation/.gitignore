@@ -1,0 +1,16 @@
+/env
+__pycache__/
+*.pyc
+
+# Generated validation outputs
+/results/
+/softeng_perf/results/
+/tools/
+/baseline/*.o
+/baseline/verify_load
+/baseline/sonar-bw/
+/framework/*.o
+/framework/verify_load
+/framework/sonar-bw/
+/perf/pcap/
+/perf/results/

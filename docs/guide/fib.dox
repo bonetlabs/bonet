@@ -1,0 +1,40 @@
+/**
+@page fib FIB lookup
+
+@c bnt_ipv4__fib_lookup() and @c bnt_ipv6__fib_lookup() query the kernel routing
+table for the next hop toward a packet's destination. The result is a handle,
+@c bnt_fib4 or @c bnt_fib6, holding the next hop's MAC addresses and outgoing
+interface on success.
+
+A typical use checks the lookup and the result, then rewrites the next-hop
+addresses and redirects:
+
+@code{.c}
+SEC("xdp")
+int forward(struct xdp_md *ctx)
+{
+    bnt_eth  eth;
+    bnt_ipv4 ip;
+    bnt_fib4 fib;
+    bool ttl_expired;
+
+    if (bnt_eth__parse(ctx, 0, &eth)) return XDP_PASS;
+    if (bnt_ctx__find_ipv4(ctx, &ip)) return XDP_PASS;
+
+    if (bnt_ipv4__fib_lookup(&ip, &fib)) return XDP_PASS;   /* lookup did not run */
+    if (!bnt_fib4__is_success(&fib))     return XDP_PASS;   /* no route          */
+
+    if (bnt_ipv4__dec_ttl(&ip, &ttl_expired))
+        return ttl_expired ? XDP_DROP : XDP_ABORTED;
+
+    bnt_eth__set_src(&eth, bnt_fib4__get_smac(&fib));
+    bnt_eth__set_dst(&eth, bnt_fib4__get_dmac(&fib));
+
+    return bpf_redirect(bnt_fib4__get_out_ifindex(&fib), 0);
+}
+@endcode
+
+For finer decisions than success or failure, @c bnt_fib4__get_status() returns
+the raw FIB result code. The IPv6 path is the same with @c bnt_ipv6__fib_lookup()
+and @c bnt_fib6.
+*/

@@ -1,0 +1,45 @@
+/**
+@page reading Reading fields
+
+Fields are read through getters, the read half of accessor-mediated access
+(writing is in @ref modifying). A getter performs the bounds check and the
+byte-order conversion.
+
+@section reading_get Getters
+
+A getter takes the view and a pointer to the output and returns a status code. A
+non-zero status means the read failed, for example on a truncated packet:
+
+@code{.c}
+SEC("xdp")
+int low_ttl_drop(struct xdp_md *ctx)
+{
+    bnt_eth  eth;
+    bnt_ipv4 ip;
+    __u8 ttl;
+
+    if (bnt_eth__parse(ctx, 0, &eth))  return XDP_PASS;
+    if (bnt_eth__next_ipv4(&eth, &ip)) return XDP_PASS;
+    if (bnt_ipv4__get_ttl(&ip, &ttl))  return XDP_PASS;
+
+    return ttl <= 1 ? XDP_DROP : XDP_PASS;
+}
+@endcode
+
+On failure a getter zeroes its output. Check the status where a failed read
+would change the outcome.
+
+@section reading_byteorder Byte order
+
+Getters return fields in host byte order. Addresses are the exception: they stay
+in network byte order, because addresses are compared and copied in their
+on-wire form rather than used as numbers:
+
+@code{.c}
+__u16  dport;
+__be32 saddr;
+
+bnt_tcp__get_dest(&tcp, &dport);    /* host order:    dport == 23                */
+bnt_ipv4__get_saddr(&ip, &saddr);   /* network order: saddr == bpf_htonl(0x0A000001) */
+@endcode
+*/

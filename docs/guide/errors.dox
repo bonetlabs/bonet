@@ -1,0 +1,19 @@
+/**
+@page errors Error codes
+
+Every function returns an @c int status from @c enum @c bnt_status. @c BNT_OK is
+zero; any non-zero value is an error. Check the status where a failure would
+change the program's outcome.
+
+| Code                  | Returned when                                                              |
+| --------------------- | ------------------------------------------------------------------------- |
+| @c BNT_OK             | success                                                                   |
+| @c BNT_ERR_TRUNC      | a packet access fell outside the packet: a short packet, or an offset past its bound |
+| @c BNT_ERR_UNSUPPORTED| the stack is valid but not one BONet covers                               |
+| @c BNT_ERR_BAD_PROTO  | the protocol does not match the requested header                          |
+| @c BNT_ERR_FRAGMENT   | the L4 header is absent because the packet is a non-first fragment        |
+| @c BNT_ERR_WRITE      | a packet write or resize failed                                           |
+| @c BNT_ERR_BAD_ARG    | a NULL view or output pointer                                             |
+| @c BNT_ERR_BAD_STATE  | the operation cannot proceed from the current header state, for example decrementing a TTL of 0 |
+| @c BNT_ERR_TOO_DEEP   | a depth bound was exhausted (see @ref limits)                             |
+*/

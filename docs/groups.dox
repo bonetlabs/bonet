@@ -1,0 +1,54 @@
+/**
+@defgroup bnt_eth Ethernet and VLAN
+@brief Parse, read, and modify Ethernet headers and the VLAN stack.
+See @ref parsing, @ref reading, @ref modifying.
+*/
+
+/**
+@defgroup bnt_ipv4 IPv4
+@brief Parse, read, and modify IPv4 headers.
+See @ref parsing, @ref reading, @ref modifying.
+*/
+
+/**
+@defgroup bnt_ipv6 IPv6
+@brief Parse, read, and modify IPv6 headers and their extension headers.
+See @ref parsing, @ref reading, @ref modifying.
+*/
+
+/**
+@defgroup bnt_tcp TCP
+@brief Parse, read, and modify TCP headers.
+See @ref reading, @ref modifying.
+*/
+
+/**
+@defgroup bnt_udp UDP
+@brief Parse, read, and modify UDP headers.
+See @ref reading, @ref modifying.
+*/
+
+/**
+@defgroup bnt_icmp4 ICMPv4
+@brief Parse, read, and modify ICMPv4 headers.
+*/
+
+/**
+@defgroup bnt_icmp6 ICMPv6
+@brief Parse, read, and modify ICMPv6 headers.
+*/
+
+/**
+@defgroup bnt_arp ARP
+@brief Parse and read ARP headers.
+*/
+
+/**
+@defgroup bnt_mpls MPLS
+@brief Parse and read the MPLS label stack.
+*/
+
+/**
+@defgroup bnt_debug Debugging
+@brief Per-header logging helpers. See @ref debug.
+*/

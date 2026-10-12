@@ -1,0 +1,30 @@
+/**
+@page view_model The view model
+
+Every BONet operation acts on a *view*: a handle to one header within one
+packet. A view is declared by the caller, initialized by the library, and passed
+to the functions that read or modify that header.
+
+@section view_model_opaque Opaque handle
+
+A view is a small stack value. Declare one and pass its address to the library:
+
+@code{.c}
+bnt_eth  eth;
+bnt_ipv4 ip;
+@endcode
+
+Parsing and navigation initialize it (see @ref parsing); the other functions
+read it back. Its fields are private and may change between releases. Do not
+access them directly.
+
+@section view_model_const Const-correctness
+
+Read accessors take a pointer to a @c const view. Functions that modify the
+packet take a non-const view. The signature alone distinguishes the two:
+
+@code{.c}
+int bnt_ipv4__get_ttl(const bnt_ipv4 *ip, __u8 *out);   /* reads  */
+int bnt_ipv4__set_ttl(bnt_ipv4 *ip, __u8 ttl);          /* writes */
+@endcode
+*/

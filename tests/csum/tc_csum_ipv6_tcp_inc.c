@@ -1,0 +1,89 @@
+#include <linux/bpf.h>
+#include <linux/pkt_cls.h>
+#include <linux/if_ether.h>
+#include <linux/ipv6.h>
+#include <linux/tcp.h>
+#include <linux/in.h>
+#include <linux/in6.h>
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
+#include "bnt_tc_ingress.h"
+
+/*
+ * Checksum test: IPv6 + TCP, incremental updates.
+ *
+ * Loaded on Machine B TC ingress.
+ * Machine A sends TCP to Machine B IPv6 port PORT_FROM.
+ * This program rewrites:
+ *   - source IPv6 address -> FAKE_SADDR6 (tests TCP pseudo-header update)
+ *   - destination port -> PORT_TO       (tests TCP checksum field)
+ * Machine B listens on PORT_TO; reception confirms correct checksums.
+ *
+ * Note: IPv6 has no header checksum; only the L4 pseudo-header is tested.
+ */
+
+#define PORT_FROM 7777
+#define PORT_TO   8888
+
+/* fd00::dead:beef - arbitrary ULA address for pseudo-header testing */
+static const __u8 fake_saddr6[16] = {
+    0xfd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xde, 0xad, 0xbe, 0xef
+};
+
+SEC("classifier")
+int tc_csum_ipv6_tcp_inc(struct __sk_buff *skb)
+{
+    bnt_eth  eth;
+    bnt_ipv6 ip6;
+    bnt_tcp  tcp;
+    __u16 dport;
+    __u32 l3_off, l4_off;
+    int   ret;
+
+    ret = bnt_eth__parse(skb, 0, &eth);
+    if (ret)
+        return TC_ACT_OK;
+    if (bnt_eth__get_ethertype(&eth) != ETH_P_IPV6)
+        return TC_ACT_OK;
+
+    ret = bnt_eth__next_off(&eth, &l3_off);
+    if (ret)
+        return TC_ACT_OK;
+
+    ret = bnt_ipv6__parse(skb, l3_off, &ip6);
+    if (ret)
+        return TC_ACT_OK;
+
+    if (bnt_ipv6__has_fragment_hdr(&ip6))
+        return TC_ACT_OK;
+
+    if (bnt_ipv6__get_l4_proto(&ip6) != IPPROTO_TCP)
+        return TC_ACT_OK;
+
+    ret = bnt_ipv6__next_off(&ip6, &l4_off);
+    if (ret)
+        return TC_ACT_OK;
+
+    ret = bnt_tcp__parse(skb, l4_off, &tcp);
+    if (ret)
+        return TC_ACT_OK;
+
+    ret = bnt_tcp__get_dest(&tcp, &dport);
+    if (ret || dport != PORT_FROM)
+        return TC_ACT_OK;
+
+    /* Incremental: source IPv6 rewrite updates TCP pseudo-header checksum */
+    ret = bnt_ipv6__set_saddr(&ip6, (const struct in6_addr *)fake_saddr6);
+    if (ret)
+        return TC_ACT_SHOT;
+
+    /* Incremental: port change updates TCP checksum field */
+    ret = bnt_tcp__set_dest(&tcp, PORT_TO);
+    if (ret)
+        return TC_ACT_SHOT;
+
+    return TC_ACT_OK;
+}
+
+char LICENSE[] SEC("license") = "GPL";

@@ -1,0 +1,17 @@
+# Functional checksum suite.
+# Columns describe which BPF objects are attached on each machine and what traffic the client sends.
+name,description,server_prog,server_type,server_egress_prog,server_egress_type,client_prog,client_type,proto,family,padded_payload,expected
+tc_csum_ipv4_tcp_inc,TC ingress IPv4 TCP incremental checksum rewrite with egress handshake,tc_csum_ipv4_tcp_inc.o,tc-ingress,tc_csum_ipv4_tcp_inc_egress.o,tc-egress,,,tcp,4,false,tcp_handshake_reaches_port_8888
+tc_csum_ipv4_tcp_full,TC ingress IPv4 TCP full checksum recompute with egress handshake,tc_csum_ipv4_tcp_full.o,tc-ingress,tc_csum_ipv4_tcp_full_egress.o,tc-egress,,,tcp,4,false,tcp_handshake_reaches_port_8888
+tc_csum_ipv4_udp_inc,TC ingress IPv4 UDP incremental checksum rewrite,tc_csum_ipv4_udp_inc.o,tc-ingress,,,,,udp,4,false,packet_reaches_port_8888
+tc_csum_ipv4_udp_full,TC ingress IPv4 UDP full checksum recompute,tc_csum_ipv4_udp_full.o,tc-ingress,,,,,udp,4,false,packet_reaches_port_8888
+tc_csum_ipv6_tcp_inc,TC ingress IPv6 TCP incremental checksum rewrite,tc_csum_ipv6_tcp_inc.o,tc-ingress,,,,,tcp,6,false,packet_reaches_port_8888
+tc_csum_ipv6_tcp_full,TC ingress IPv6 TCP full checksum recompute,tc_csum_ipv6_tcp_full.o,tc-ingress,,,,,tcp,6,false,packet_reaches_port_8888
+tc_csum_ipv6_udp_inc,TC ingress IPv6 UDP incremental checksum rewrite,tc_csum_ipv6_udp_inc.o,tc-ingress,,,,,udp,6,false,packet_reaches_port_8888
+tc_csum_ipv6_udp_full,TC ingress IPv6 UDP full checksum recompute,tc_csum_ipv6_udp_full.o,tc-ingress,,,,,udp,6,false,packet_reaches_port_8888
+tc_adjust_ipv4_tcp,TC ingress IPv4 TCP tail adjustment with checksum recompute,tc_adjust_ipv4_tcp_ingress.o,tc-ingress,,,,,tcp,4,true,padded_packet_is_trimmed_and_reaches_port_8888
+tc_adjust_ipv4_udp,TC ingress IPv4 UDP tail adjustment with checksum recompute,tc_adjust_ipv4_udp_ingress.o,tc-ingress,,,,,udp,4,true,padded_packet_is_trimmed_and_reaches_port_8888
+tc_adjust_ipv6_tcp,TC ingress IPv6 TCP tail adjustment with checksum recompute,tc_adjust_ipv6_tcp_ingress.o,tc-ingress,,,,,tcp,6,true,padded_packet_is_trimmed_and_reaches_port_8888
+tc_adjust_ipv6_udp,TC ingress IPv6 UDP tail adjustment with checksum recompute,tc_adjust_ipv6_udp_ingress.o,tc-ingress,,,,,udp,6,true,padded_packet_is_trimmed_and_reaches_port_8888
+xdp_adjust_ipv4_tcp,XDP IPv4 TCP tail adjustment with checksum recompute,xdp_adjust_ipv4_tcp_ingress.o,xdp,,,,,tcp,4,true,padded_packet_is_trimmed_and_reaches_port_8888
+xdp_adjust_ipv4_udp,XDP IPv4 UDP tail adjustment with checksum recompute,xdp_adjust_ipv4_udp_ingress.o,xdp,,,,,udp,4,true,padded_packet_is_trimmed_and_reaches_port_8888

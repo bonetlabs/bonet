@@ -1,0 +1,54 @@
+/**
+@mainpage BONet
+
+BONet is a header-only library for parsing and rewriting packets in eBPF data
+paths. It exposes each header as a typed view, replacing raw pointer arithmetic,
+manual bounds checks, byte-order conversion, and hand-written checksum updates.
+One API targets both XDP and TC.
+
+It covers Ethernet, VLAN, MPLS, ARP, IPv4, IPv6 with extension headers, TCP, UDP,
+ICMPv4, ICMPv6, and SRv6.
+
+@section main_example A first program
+
+This XDP program drops IPv4 TCP SYN packets sent to port 23:
+
+@code{.c}
+#include "bnt_xdp.h"
+
+SEC("xdp")
+int xdp_drop_telnet(struct xdp_md *ctx)
+{
+    bnt_eth  eth;
+    bnt_ipv4 ip;
+    bnt_tcp  tcp;
+    __u16 dport;
+    bool  syn;
+
+    if (bnt_eth__parse(ctx, 0, &eth))   return XDP_PASS;
+    if (bnt_eth__next_ipv4(&eth, &ip))  return XDP_PASS;
+    if (bnt_ipv4__next_tcp(&ip, &tcp))  return XDP_PASS;
+
+    if (bnt_tcp__get_dest(&tcp, &dport) || bnt_tcp__is_syn(&tcp, &syn))
+        return XDP_PASS;
+
+    return (dport == 23 && syn) ? XDP_DROP : XDP_PASS;
+}
+@endcode
+
+For building and installing the headers, see the project README.
+
+@section main_guide Guide
+
+-# @subpage view_model
+-# @subpage backends
+-# @subpage parsing
+-# @subpage reading
+-# @subpage modifying
+-# @subpage headers_insert_remove
+-# @subpage fib
+-# @subpage build_modes
+-# @subpage limits
+-# @subpage errors
+-# @subpage debug
+*/

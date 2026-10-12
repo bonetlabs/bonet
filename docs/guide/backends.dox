@@ -1,0 +1,56 @@
+/**
+@page backends Backends: XDP and TC
+
+BONet provides one backend header per hook type. Include the header for your
+hook; it pulls in the rest of the library. A single source file includes only
+one backend header.
+
+@section backends_choice Backend headers
+
+| Hook       | Header              | Context type           |
+| ---------- | ------------------- | ---------------------- |
+| XDP        | @c bnt_xdp.h        | @c struct @c xdp_md    |
+| TC ingress | @c bnt_tc_ingress.h | @c struct @c __sk_buff |
+| TC egress  | @c bnt_tc_egress.h  | @c struct @c __sk_buff |
+
+@section backends_ctx Entry point
+
+A program starts by parsing its outermost header. @c bnt_eth__parse() takes the
+context and a starting offset and initializes a view:
+
+@code{.c}
+#include "bnt_xdp.h"
+
+SEC("xdp")
+int prog(struct xdp_md *ctx)
+{
+    bnt_eth eth;
+    if (bnt_eth__parse(ctx, 0, &eth))
+        return XDP_PASS;
+    /* ... */
+}
+@endcode
+
+On TC only the context type changes:
+
+@code{.c}
+#include "bnt_tc_ingress.h"
+
+SEC("tc")
+int prog(struct __sk_buff *skb)
+{
+    bnt_eth eth;
+    if (bnt_eth__parse(skb, 0, &eth))
+        return TC_ACT_OK;
+    /* ... */
+}
+@endcode
+
+Subsequent calls take views, not the context.
+
+@section backends_same Backend portability
+
+The API is identical across backends. Porting a program changes only the
+included header and the context type. The only exception concerns explicit
+checksum handling; see @ref modifying.
+*/

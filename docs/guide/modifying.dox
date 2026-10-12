@@ -1,0 +1,57 @@
+/**
+@page modifying Modifying fields and checksums
+
+Fields are written through setters, the write half of accessor-mediated access
+(reading is in @ref reading). Values are passed in the byte order the getters
+use; see @ref reading.
+
+@section modifying_set Setters
+
+@c set_<field> writes the field and, where the field has a checksum, updates it
+incrementally. This is the standard way to modify a packet:
+
+@code{.c}
+bnt_ipv4__set_ttl(&ip, 64);
+@endcode
+
+When a field also feeds the next layer's checksum, the incremental update
+follows through for the headers BONet supports. Rewriting an IPv4 address fixes
+both the IPv4 header checksum and the TCP or UDP checksum that covers it through
+the pseudo-header in one call:
+
+@code{.c}
+SEC("xdp")
+int dnat(struct xdp_md *ctx)
+{
+    bnt_eth  eth;
+    bnt_ipv4 ip;
+
+    if (bnt_eth__parse(ctx, 0, &eth))  return XDP_PASS;
+    if (bnt_eth__next_ipv4(&eth, &ip)) return XDP_PASS;
+
+    /* Redirect to a new destination; both checksums stay correct. */
+    if (bnt_ipv4__set_daddr(&ip, bpf_htonl(0x0A000002)))
+        return XDP_DROP;
+
+    return XDP_PASS;
+}
+@endcode
+
+When the upper layer is not a supported L4 header, only the IPv4 header checksum
+is updated.
+
+@section modifying_recompute Full recompute
+
+Incremental updates cover almost every case. A full recompute is heavier and is
+reserved for changing many fields at once. Write the fields with the @c _no_csum
+setters, then rebuild the checksum once:
+
+@code{.c}
+bnt_tcp__set_dest_no_csum(&tcp, bpf_htons(8080));
+bnt_tcp__set_source_no_csum(&tcp, bpf_htons(40000));
+bnt_tcp__recompute_csum(&tcp, &ip);
+@endcode
+
+A recompute is provided only where a header can be rebuilt from scratch, and not
+on TC egress, where the kernel owns the checksum.
+*/

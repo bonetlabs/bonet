@@ -1,0 +1,145 @@
+/**
+@page parsing Parsing and navigation
+
+Navigating from one header to the next with the @c next_ functions is the
+primary way to parse a packet. Each @c next_ call validates as it advances,
+which is also how a header with more than one possible successor is handled. A
+separate family, @c bnt_ctx__find_, reaches a deep header directly when the
+layers above it are irrelevant.
+
+@section parsing_navigate Navigating header by header
+
+Parse the outermost header, then descend with a @c next_ call per layer:
+
+@code{.c}
+SEC("xdp")
+int drop_telnet(struct xdp_md *ctx)
+{
+    bnt_eth  eth;
+    bnt_ipv4 ip;
+    bnt_tcp  tcp;
+    __u16 dport;
+    bool  syn;
+
+    if (bnt_eth__parse(ctx, 0, &eth))  return XDP_PASS;
+    if (bnt_eth__next_ipv4(&eth, &ip)) return XDP_PASS;   /* not IPv4 */
+    if (bnt_ipv4__next_tcp(&ip, &tcp)) return XDP_PASS;   /* not TCP  */
+
+    if (bnt_tcp__get_dest(&tcp, &dport) || bnt_tcp__is_syn(&tcp, &syn))
+        return XDP_PASS;
+
+    return (dport == 23 && syn) ? XDP_DROP : XDP_PASS;
+}
+@endcode
+
+Each @c next_ call reads the current header, checks that the following protocol
+is the one requested, and initializes the destination view. It returns
+@c BNT_ERR_BAD_PROTO when the protocol does not match. A view obtained from a
+@c next_ call therefore refers to a header that is present and of the expected
+type.
+
+@section parsing_branch Handling more than one protocol
+
+A @c next_ call reports a protocol mismatch as @c BNT_ERR_BAD_PROTO, so it
+doubles as a protocol test. To accept either of two protocols, attempt each in
+turn:
+
+@code{.c}
+bnt_tcp tcp;
+bnt_udp udp;
+
+if (bnt_ipv4__next_tcp(&ip, &tcp) == BNT_OK) {
+    /* ... TCP ... */
+} else if (bnt_ipv4__next_udp(&ip, &udp) == BNT_OK) {
+    /* ... UDP ... */
+}
+@endcode
+
+When several protocols are possible, reading the protocol field once and
+dispatching is clearer than a chain of attempts:
+
+@code{.c}
+__u8 proto;
+if (bnt_ipv4__get_protocol(&ip, &proto)) return XDP_PASS;
+
+switch (proto) {
+case IPPROTO_TCP: {
+    bnt_tcp tcp;
+    if (bnt_ipv4__next_tcp(&ip, &tcp)) return XDP_PASS;
+    /* ... TCP ... */
+    break;
+}
+case IPPROTO_UDP: {
+    bnt_udp udp;
+    if (bnt_ipv4__next_udp(&ip, &udp)) return XDP_PASS;
+    /* ... UDP ... */
+    break;
+}
+}
+@endcode
+
+The protocol field is read with @c bnt_ipv4__get_protocol(),
+@c bnt_ipv6__get_l4_proto(), or @c bnt_eth__get_outer_proto().
+
+@c bnt_eth__parse_l3() and @c bnt_ipv4__parse_l4() perform this dispatch in a
+single call, initializing whichever of the supplied views matches; see the
+reference.
+
+@section parsing_find Finding a header directly
+
+When the layers above the target are irrelevant, @c bnt_ctx__find_ walks the
+supported stacks from Ethernet offset 0 and initializes the first header of the
+requested type. The same drop, without the intermediate layers:
+
+@code{.c}
+SEC("xdp")
+int drop_telnet(struct xdp_md *ctx)
+{
+    bnt_tcp tcp;
+    __u16 dport;
+    bool  syn;
+
+    if (bnt_ctx__find_tcp(ctx, &tcp)) return XDP_PASS;
+
+    if (bnt_tcp__get_dest(&tcp, &dport) || bnt_tcp__is_syn(&tcp, &syn))
+        return XDP_PASS;
+
+    return (dport == 23 && syn) ? XDP_DROP : XDP_PASS;
+}
+@endcode
+
+A find traverses only the packet stacks BONet supports. The exact stacks each
+one covers are listed with the function in the reference. Off a supported path
+it reports the boundary through its return value:
+
+- @c BNT_ERR_BAD_PROTO when a supported protocol is present at that layer but is
+  not the requested one.
+- @c BNT_ERR_UNSUPPORTED for a valid stack the walker does not cover.
+- @c BNT_ERR_TOO_DEEP when a depth bound is exhausted. The bounds, and how to
+  change them, are in @ref limits.
+
+@section parsing_fragments Fragments
+
+Reaching an L4 header requires that header to be present in the packet. On a
+non-first IP fragment it is not, so navigating or finding an L4 header returns
+@c BNT_ERR_FRAGMENT. Check for this code wherever the path can carry fragments.
+
+@section parsing_beyond Parsing beyond BONet's headers
+
+To continue past a header BONet does not model, take the offset of the next
+header with @c bnt_*__next_off and read from there yourself:
+
+@code{.c}
+__u32 off;
+struct myhdr hdr;
+
+if (bnt_ipv4__next_off(&ip, &off))             /* offset after the IPv4 header */
+    return XDP_PASS;
+if (bpf_xdp_load_bytes(ctx, off, &hdr, sizeof(hdr)))
+    return XDP_PASS;
+/* ... read hdr ... */
+@endcode
+
+The offset can also be used directly in inline @c data @c + @c off pointer
+code, not only through a load helper.
+*/

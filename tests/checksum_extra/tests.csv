@@ -1,0 +1,6 @@
+# Additional checksum cases kept separate from the original csum suite.
+name,description,server_prog,server_type,server_egress_prog,server_egress_type,client_prog,client_type,proto,family,padded_payload,expected
+tc_ipv4_udp_saddr_inc,TC IPv4 UDP source-address pseudo-header incremental update,tc_ipv4_udp_saddr_inc.o,tc-ingress,,,,,udp,4,false,map_status_ok_and_packet_reaches_port_8888
+xdp_ipv4_udp_saddr_full,XDP IPv4 UDP source-address rewrite with full recompute,xdp_ipv4_udp_saddr_full.o,xdp,,,,,udp,4,false,map_status_ok_and_packet_reaches_port_8888
+tc_icmp4_echo_inc,TC ICMPv4 echo id and sequence incremental checksum update,tc_icmp4_echo_inc.o,tc-ingress,,,,,icmp4,4,false,map_status_ok
+tc_icmp6_echo_inc,TC ICMPv6 echo id and sequence incremental checksum update,tc_icmp6_echo_inc.o,tc-ingress,,,,,icmp6,6,false,map_status_ok
