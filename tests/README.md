@@ -20,26 +20,35 @@ programs:
 - `debug/` covers the optional `bnt_debug.h` event helpers.
 - `common/` contains shared BPF-side test support, including the
   `bnt_test_result` map ABI used by map-backed suites.
-- `globals/` loads every XDP global subprogram on its own, in the default build
-  and with `BNT_STRICT_ALIGN=1` under `BPF_F_STRICT_ALIGNMENT`. The kernel only
-  verifies the globals a program calls, so this catches a global that no other
-  test reaches. It runs on one machine, outside `run_tests.sh`:
-  `make -C globals check` (needs root). The debug-header globals are not
-  included.
-- `units/` runs every XDP global on prepared packets with `BPF_PROG_TEST_RUN`
-  and compares the return value, the output buffer and the resulting packet
-  with `expected.json`, in the default build and with `BNT_STRICT_ALIGN=1`. The
-  cases, including error paths, are in `cases.py`. It also runs on one machine:
-  `make -C units check` (needs root). After an intended behaviour change,
-  `make -C units update-expected` records new results from the default build.
-  For the FIB lookups only the return value and the packet are compared, since
-  the lookup result depends on the routing table; for `csum_blk`/`csum_word`
-  the `bpf_csum_diff` value is compared folded to 16 bits, since its 32-bit form
-  changes with the kernel version.
+- `globals/` loads every XDP global on its own.
+- `units/` calls every XDP global on prepared packets and checks the results.
 
-Each suite owns a `tests.csv` file. The CSV is loaded on every runner startup
-and describes the object files to attach, the attach type, the traffic protocol,
-the IP family, and whether the client should send padded payloads.
+`globals/` and `units/` run on one machine (see below). The other suites run
+between two machines; each owns a `tests.csv` file, loaded on every runner
+startup, that describes the object files to attach, the attach type, the
+traffic protocol, the IP family, and whether the client should send padded
+payloads.
+
+## Single-machine tests
+
+`run_tests.sh` does not run these. From `tests/`, as root:
+
+```sh
+make check-local
+```
+
+`globals/` loads each global in the default build and, under
+`BPF_F_STRICT_ALIGNMENT`, in a `BNT_STRICT_ALIGN=1` build. The kernel only
+verifies the globals a program calls, so this covers the ones no other test
+reaches. The `bnt_debug.h` globals are left out.
+
+`units/` runs the cases in `cases.py` with `BPF_PROG_TEST_RUN`, in both builds,
+and compares the return value, the output buffer and the packet with
+`expected.json`. After an intended behaviour change, record new results with
+`make -C units update-expected`. For the FIB lookups the output buffer is not
+compared, since it depends on the routing table; for `csum_blk` and `csum_word`
+it is compared folded to 16 bits, since the raw `bpf_csum_diff` value changes
+with the kernel version.
 
 ## Configuration
 

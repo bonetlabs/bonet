@@ -1,3 +1,5 @@
 *.o
 /bin/
 config.ini
+/globals/build/
+/units/build/

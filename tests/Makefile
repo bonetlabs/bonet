@@ -28,6 +28,12 @@ $(CLIENT): $(GO_SOURCES) | $(BIN_DIR)
 server client:
 	./run_tests.sh --suite $(SUITE) $@ $(RUN_ARGS)
 
+# Single-machine tests (need root): every global loaded on its own, and every
+# global run on prepared packets.
+check-local:
+	$(MAKE) -C globals check
+	$(MAKE) -C units check
+
 server-% client-%:
 	./run_tests.sh --suite $* $(firstword $(subst -, ,$@)) $(RUN_ARGS)
 
@@ -35,4 +41,4 @@ clean:
 	rm -f $(SERVER) $(CLIENT)
 	for suite in $(SUITES); do $(MAKE) -C $$suite clean; done
 
-.PHONY: all suites clean server client server-% client-% $(SUITES)
+.PHONY: all suites clean server client server-% client-% check-local $(SUITES)
