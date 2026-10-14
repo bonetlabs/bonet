@@ -778,31 +778,34 @@ static __always_inline __u32 __bnt_arp_tpa_off(const bnt_arp *arp, const struct 
  *
  * Placement: defined here (before their callers) so no forward declaration
  * is needed within a single-TU BPF program. Linkage is non-static + weak
- * (__attribute__((noinline, weak))): non-static keeps them BTF_FUNC_GLOBAL so
- * the verifier checks each once in isolation (the caller-independent guarantee);
- * weak lets the BPF static linker dedup the definition when several TUs that
- * include this header are combined into one object (bpftool gen object /
- * libbpf), instead of failing on a duplicate symbol. static is NOT an option:
- * it would make the verifier inline caller state and drop the isolation.
+ * (__attribute__((noinline, weak, nonnull(1)))): non-static keeps them
+ * BTF_FUNC_GLOBAL so the verifier checks each once in isolation (the
+ * caller-independent guarantee); weak lets the BPF static linker dedup the
+ * definition when several TUs that include this header are combined into one
+ * object (bpftool gen object / libbpf), instead of failing on a duplicate
+ * symbol. static is NOT an option: it would make the verifier inline caller
+ * state and drop the isolation. nonnull(1): the verifier only accepts a call to
+ * a global whose ctx argument is the program's ctx, so ctx is never NULL inside
+ * one and clang drops the !ctx checks of the inlined helpers.
  */
 #if !BNT_INLINE_ALL
 
-__attribute__((noinline, weak)) int __bnt_read_u8_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 *out)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_read_u8_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 *out)
 {
     return __bnt_read_u8(ctx, off, out);
 }
 
-__attribute__((noinline, weak)) int __bnt_read_be16_g(BNT_CTX_TYPE *ctx, __u32 off, __be16 *out)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_read_be16_g(BNT_CTX_TYPE *ctx, __u32 off, __be16 *out)
 {
     return __bnt_read_be16(ctx, off, out);
 }
 
-__attribute__((noinline, weak)) int __bnt_read_be32_g(BNT_CTX_TYPE *ctx, __u32 off, __be32 *out)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_read_be32_g(BNT_CTX_TYPE *ctx, __u32 off, __be32 *out)
 {
     return __bnt_read_be32(ctx, off, out);
 }
 
-__attribute__((noinline, weak)) int __bnt_read_mac_g(BNT_CTX_TYPE *ctx, __u32 off, struct __bnt_mac *out)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_read_mac_g(BNT_CTX_TYPE *ctx, __u32 off, struct __bnt_mac *out)
 {
     if (!out)
         return BNT_ERR_BAD_ARG;
@@ -810,7 +813,7 @@ __attribute__((noinline, weak)) int __bnt_read_mac_g(BNT_CTX_TYPE *ctx, __u32 of
     return __bnt_read(ctx, off, out->addr, BNT_MAC_LEN);
 }
 
-__attribute__((noinline, weak)) int __bnt_read_in6_g(BNT_CTX_TYPE *ctx, __u32 off, struct in6_addr *out)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_read_in6_g(BNT_CTX_TYPE *ctx, __u32 off, struct in6_addr *out)
 {
     if (!out)
         return BNT_ERR_BAD_ARG;
@@ -818,29 +821,29 @@ __attribute__((noinline, weak)) int __bnt_read_in6_g(BNT_CTX_TYPE *ctx, __u32 of
     return __bnt_read(ctx, off, out, sizeof(*out));
 }
 
-__attribute__((noinline, weak)) int __bnt_write_u8_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 val)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_write_u8_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 val)
 {
     return __bnt_write_u8(ctx, off, val);
 }
 
-__attribute__((noinline, weak)) int __bnt_write_be16_g(BNT_CTX_TYPE *ctx, __u32 off, __be16 val)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_write_be16_g(BNT_CTX_TYPE *ctx, __u32 off, __be16 val)
 {
     return __bnt_write_be16(ctx, off, val);
 }
 
-__attribute__((noinline, weak)) int __bnt_write_be32_g(BNT_CTX_TYPE *ctx, __u32 off, __be32 val)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_write_be32_g(BNT_CTX_TYPE *ctx, __u32 off, __be32 val)
 {
     return __bnt_write_be32(ctx, off, val);
 }
 
-__attribute__((noinline, weak)) int __bnt_write_mac_g(BNT_CTX_TYPE *ctx, __u32 off, const struct __bnt_mac *in)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_write_mac_g(BNT_CTX_TYPE *ctx, __u32 off, const struct __bnt_mac *in)
 {
     if (!in)
         return BNT_ERR_BAD_ARG;
     return __bnt_write(ctx, off, in->addr, BNT_MAC_LEN);
 }
 
-__attribute__((noinline, weak)) int __bnt_write_in6_g(BNT_CTX_TYPE *ctx, __u32 off, const struct in6_addr *in)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_write_in6_g(BNT_CTX_TYPE *ctx, __u32 off, const struct in6_addr *in)
 {
     if (!in)
         return BNT_ERR_BAD_ARG;
@@ -857,7 +860,7 @@ __attribute__((noinline, weak)) int __bnt_write_in6_g(BNT_CTX_TYPE *ctx, __u32 o
  * to propagate packet pointer ranges across the resulting multi-load sequence.
  */
 
-__attribute__((noinline, weak)) int __bnt_eth_next_off_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 *out)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_eth_next_off_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 *out)
 {
     __be16 proto;
     __u32 hlen;
@@ -893,7 +896,7 @@ __attribute__((noinline, weak)) int __bnt_eth_next_off_g(BNT_CTX_TYPE *ctx, __u3
     return BNT_OK;
 }
 
-__attribute__((noinline, weak)) int __bnt_ipv4_next_off_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 *out)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_ipv4_next_off_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 *out)
 {
     struct iphdr *ip;
     __u8 vihl;
@@ -937,7 +940,7 @@ __attribute__((noinline, weak)) int __bnt_ipv4_next_off_g(BNT_CTX_TYPE *ctx, __u
     return BNT_OK;
 }
 
-__attribute__((noinline, weak)) int __bnt_ipv4_next_proto_off_g(BNT_CTX_TYPE *ctx, __u32 off,
+__attribute__((noinline, weak, nonnull(1))) int __bnt_ipv4_next_proto_off_g(BNT_CTX_TYPE *ctx, __u32 off,
                                                             __u8 *proto, __u32 *proto_off)
 {
     struct iphdr *ip;
@@ -987,7 +990,7 @@ __attribute__((noinline, weak)) int __bnt_ipv4_next_proto_off_g(BNT_CTX_TYPE *ct
     return BNT_OK;
 }
 
-__attribute__((noinline, weak)) int __bnt_ipv6_next_off_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 *out)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_ipv6_next_off_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 *out)
 {
     __u8 first;
     __u8 nexthdr;
@@ -1056,7 +1059,7 @@ __attribute__((noinline, weak)) int __bnt_ipv6_next_off_g(BNT_CTX_TYPE *ctx, __u
     return BNT_OK;
 }
 
-__attribute__((noinline, weak)) int __bnt_tcp_next_off_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 *out)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_tcp_next_off_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 *out)
 {
     __u8 doff_flags0;
     __u8 dummy;
@@ -1145,7 +1148,7 @@ static __always_inline int __bnt_eth_fill_meta(BNT_CTX_TYPE *ctx, __u32 off,
     return BNT_OK;
 }
 
-__attribute__((noinline, weak)) int __bnt_eth_meta_g(BNT_CTX_TYPE *ctx, __u32 off,
+__attribute__((noinline, weak, nonnull(1))) int __bnt_eth_meta_g(BNT_CTX_TYPE *ctx, __u32 off,
                                                 struct __bnt_eth_meta *out)
 {
     return __bnt_eth_fill_meta(ctx, off, out);
@@ -1251,7 +1254,7 @@ static __always_inline int __bnt_ipv6_fill_meta(BNT_CTX_TYPE *ctx, __u32 off,
     return BNT_OK;
 }
 
-__attribute__((noinline, weak)) int __bnt_ipv6_meta_g(BNT_CTX_TYPE *ctx, __u32 off,
+__attribute__((noinline, weak, nonnull(1))) int __bnt_ipv6_meta_g(BNT_CTX_TYPE *ctx, __u32 off,
                                                  struct __bnt_ipv6_meta *m)
 {
     return __bnt_ipv6_fill_meta(ctx, off, m);
@@ -1261,7 +1264,7 @@ __attribute__((noinline, weak)) int __bnt_ipv6_meta_g(BNT_CTX_TYPE *ctx, __u32 o
  * Metadata global: reads the fixed ARP header and fills __bnt_arp_meta.
  * Per-field reads via the primitive globals keep all packet access confined.
  */
-__attribute__((noinline, weak)) int __bnt_arp_meta_g(BNT_CTX_TYPE *ctx, __u32 off,
+__attribute__((noinline, weak, nonnull(1))) int __bnt_arp_meta_g(BNT_CTX_TYPE *ctx, __u32 off,
                                                 struct __bnt_arp_meta *m)
 {
     struct bnt_arp_hdr *a;
@@ -1305,7 +1308,7 @@ __attribute__((noinline, weak)) int __bnt_arp_meta_g(BNT_CTX_TYPE *ctx, __u32 of
  * __bnt_ipv4_meta.  Per-field reads via the primitive globals keep all packet
  * access confined, so the variable-length-header bounds check is verified once.
  */
-__attribute__((noinline, weak)) int __bnt_ipv4_meta_g(BNT_CTX_TYPE *ctx, __u32 off,
+__attribute__((noinline, weak, nonnull(1))) int __bnt_ipv4_meta_g(BNT_CTX_TYPE *ctx, __u32 off,
                                                  struct __bnt_ipv4_meta *m)
 {
     struct iphdr *ip;
@@ -2495,7 +2498,7 @@ static __always_inline int bnt_ipv6__is_more_fragments(const bnt_ipv6 *ip6, bool
  * is an extension header, so the walk (fill_meta) always runs; it already yields
  * frag_hdr_off and the current frag_off_flags. No checksum (IPv6 has none and the
  * fragment flags are not in the L4 pseudo-header). */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv6_set_frag_off_flags_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 value)
 {
     struct __bnt_ipv6_meta meta;
@@ -2511,7 +2514,7 @@ int __bnt_ipv6_set_frag_off_flags_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 value)
     *(__be16 *)p = bpf_htons(value);
     return BNT_OK;
 }
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv6_set_frag_flag_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 flag, int enabled)
 {
     struct __bnt_ipv6_meta meta;
@@ -2652,7 +2655,7 @@ static __always_inline int bnt_ipv6__get_daddr(const bnt_ipv6 *ip6, struct in6_a
 /* Isolated subprogram for the default (global) build mode, same convention as
  * every other bnt_*_g helper: keeps the FIB lookup's stack usage and verifier
  * state out of the caller. Portable across backends (BNT_CTX_TYPE, __bnt_read). */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv4_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib4 *fib)
 {
     struct iphdr h;
@@ -2664,8 +2667,6 @@ int __bnt_ipv4_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib4 *fib)
     if (!fib)
         return BNT_ERR_BAD_ARG;
     __builtin_memset(fib, 0, sizeof(*fib));
-    if (!ctx)
-        return BNT_ERR_BAD_ARG;
 
     ret = __bnt_read(ctx, ip_off, &h, sizeof(h));
     if (ret)
@@ -2774,7 +2775,7 @@ static __always_inline int bnt_ipv4__fib_lookup(const bnt_ipv4 *ip, bnt_fib4 *fi
 #if !BNT_INLINE_ALL
 /* Isolated subprogram for the default (global) build mode; see
  * __bnt_ipv4_fib_lookup_g above. */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv6_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib6 *fib)
 {
     struct ipv6hdr h = {};
@@ -2785,8 +2786,6 @@ int __bnt_ipv6_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib6 *fib)
     if (!fib)
         return BNT_ERR_BAD_ARG;
     __builtin_memset(fib, 0, sizeof(*fib));
-    if (!ctx)
-        return BNT_ERR_BAD_ARG;
 
     ret = __bnt_read(ctx, ip_off, &h, sizeof(h));
     if (ret)
@@ -2968,7 +2967,7 @@ static __always_inline int bnt_ipv6__set_hop_limit(bnt_ipv6 *ip6, __u8 hop_limit
 }
 
 #if !BNT_INLINE_ALL
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv6_dec_hop_limit_g(BNT_CTX_TYPE *ctx, __u32 off, bool *expired)
 {
     struct ipv6hdr *ip6;
@@ -3072,7 +3071,7 @@ static __always_inline int __bnt_ipv6_update_l4_addr_csum(bnt_ipv6 *ip6,
  * the common case (L4 directly after the base header) the ext-header walk is a
  * pure `if` with no nested calls; only real extension headers trigger
  * __bnt_ipv6_fill_meta (which uses the primitive read globals). */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv6_set_addr_g(BNT_CTX_TYPE *ctx, __u32 off,
                            const struct in6_addr *addr, int is_daddr)
 {
@@ -4051,7 +4050,7 @@ static __always_inline int bnt_icmp4__get_echo_seq(const bnt_icmp4 *icmp, __u16 
 /* Fat operation-globals shared by ICMPv4 and ICMPv6 (identical layout:
  * type@0, code@1, checksum@2, echo id@4, echo seq@6). Direct access, one
  * isolated subprogram; cover 8 setter APIs with two globals. */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_icmp_set_typecode_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 value, int is_code)
 {
     __u8 *p;
@@ -4065,7 +4064,7 @@ int __bnt_icmp_set_typecode_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 value, int is_c
     *(__be16 *)(p + 2) = __bnt_csum16_update(*(__be16 *)(p + 2), old, neww);
     return BNT_OK;
 }
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_icmp_set_echo_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 value, int is_seq)
 {
     __u8 *p;
@@ -4656,7 +4655,7 @@ static __always_inline int __bnt_icmp6__write_neighbor_advert_flags(bnt_icmp6 *i
 /* Fat operation-global behind ICMPv6 Router/Neighbor Advertisement flag set/clear.
  * Flags live in the word at off+4: low byte for RA, high byte for NA. Validates
  * the message type, toggles the bit, updates the ICMPv6 checksum (at off+2). */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_icmp6_set_advert_flag_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 flag,
                                    int enabled, int is_neighbor)
 {
@@ -6407,7 +6406,7 @@ static __always_inline int __bnt_ctx__validate_arp(const bnt_arp *arp)
  */
 #if !BNT_INLINE_ALL
 
-__attribute__((noinline, weak)) int __bnt_ctx_find_ipv4_g(BNT_CTX_TYPE *ctx, __u32 *ip_off)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_ctx_find_ipv4_g(BNT_CTX_TYPE *ctx, __u32 *ip_off)
 {
     struct __bnt_eth_meta meta;
     bnt_eth eth;
@@ -6433,7 +6432,7 @@ __attribute__((noinline, weak)) int __bnt_ctx_find_ipv4_g(BNT_CTX_TYPE *ctx, __u
     return BNT_OK;
 }
 
-__attribute__((noinline, weak)) int __bnt_ctx_find_ipv6_g(BNT_CTX_TYPE *ctx, __u32 *ip_off)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_ctx_find_ipv6_g(BNT_CTX_TYPE *ctx, __u32 *ip_off)
 {
     struct __bnt_eth_meta meta;
     bnt_eth eth;
@@ -6459,7 +6458,7 @@ __attribute__((noinline, weak)) int __bnt_ctx_find_ipv6_g(BNT_CTX_TYPE *ctx, __u
     return BNT_OK;
 }
 
-__attribute__((noinline, weak)) int __bnt_ctx_find_tcp_g(BNT_CTX_TYPE *ctx, __u32 *tcp_off)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_ctx_find_tcp_g(BNT_CTX_TYPE *ctx, __u32 *tcp_off)
 {
     struct __bnt_eth_meta meta;
     bnt_eth eth;
@@ -6505,7 +6504,7 @@ __attribute__((noinline, weak)) int __bnt_ctx_find_tcp_g(BNT_CTX_TYPE *ctx, __u3
     return __bnt_ctx__l3_mismatch(meta.proto);
 }
 
-__attribute__((noinline, weak)) int __bnt_ctx_find_udp_g(BNT_CTX_TYPE *ctx, __u32 *udp_off)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_ctx_find_udp_g(BNT_CTX_TYPE *ctx, __u32 *udp_off)
 {
     struct __bnt_eth_meta meta;
     bnt_eth eth;
@@ -6551,7 +6550,7 @@ __attribute__((noinline, weak)) int __bnt_ctx_find_udp_g(BNT_CTX_TYPE *ctx, __u3
     return __bnt_ctx__l3_mismatch(meta.proto);
 }
 
-__attribute__((noinline, weak)) int __bnt_ctx_find_icmp4_g(BNT_CTX_TYPE *ctx, __u32 *icmp_off)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_ctx_find_icmp4_g(BNT_CTX_TYPE *ctx, __u32 *icmp_off)
 {
     struct __bnt_eth_meta meta;
     bnt_eth eth;
@@ -6580,7 +6579,7 @@ __attribute__((noinline, weak)) int __bnt_ctx_find_icmp4_g(BNT_CTX_TYPE *ctx, __
     return BNT_OK;
 }
 
-__attribute__((noinline, weak)) int __bnt_ctx_find_icmp6_g(BNT_CTX_TYPE *ctx, __u32 *icmp_off)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_ctx_find_icmp6_g(BNT_CTX_TYPE *ctx, __u32 *icmp_off)
 {
     struct __bnt_eth_meta meta;
     bnt_eth eth;
@@ -7510,7 +7509,7 @@ static __always_inline int __bnt_icmp6__recompute_csum(bnt_icmp6 *icmp, bnt_ipv6
  */
 #if !BNT_INLINE_ALL
 
-__attribute__((noinline, weak)) int __bnt_ipv4_recompute_csum_g(BNT_CTX_TYPE *ctx, __u32 ip_off)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_ipv4_recompute_csum_g(BNT_CTX_TYPE *ctx, __u32 ip_off)
 {
     bnt_ipv4 ip;
 
@@ -7519,7 +7518,7 @@ __attribute__((noinline, weak)) int __bnt_ipv4_recompute_csum_g(BNT_CTX_TYPE *ct
     return __bnt_ipv4__recompute_csum(&ip);
 }
 
-__attribute__((noinline, weak)) int __bnt_tcp_recompute_csum_v4_g(BNT_CTX_TYPE *ctx,
+__attribute__((noinline, weak, nonnull(1))) int __bnt_tcp_recompute_csum_v4_g(BNT_CTX_TYPE *ctx,
                                                               __u32 tcp_off, __u32 ip_off)
 {
     bnt_tcp tcp;
@@ -7532,7 +7531,7 @@ __attribute__((noinline, weak)) int __bnt_tcp_recompute_csum_v4_g(BNT_CTX_TYPE *
     return __bnt_tcp__recompute_csum_v4(&tcp, &ip4);
 }
 
-__attribute__((noinline, weak)) int __bnt_tcp_recompute_csum_v6_g(BNT_CTX_TYPE *ctx,
+__attribute__((noinline, weak, nonnull(1))) int __bnt_tcp_recompute_csum_v6_g(BNT_CTX_TYPE *ctx,
                                                               __u32 tcp_off, __u32 ip_off)
 {
     bnt_tcp tcp;
@@ -7545,7 +7544,7 @@ __attribute__((noinline, weak)) int __bnt_tcp_recompute_csum_v6_g(BNT_CTX_TYPE *
     return __bnt_tcp__recompute_csum_v6(&tcp, &ip6);
 }
 
-__attribute__((noinline, weak)) int __bnt_udp_recompute_csum_v4_g(BNT_CTX_TYPE *ctx,
+__attribute__((noinline, weak, nonnull(1))) int __bnt_udp_recompute_csum_v4_g(BNT_CTX_TYPE *ctx,
                                                               __u32 udp_off, __u32 ip_off)
 {
     bnt_udp udp;
@@ -7558,7 +7557,7 @@ __attribute__((noinline, weak)) int __bnt_udp_recompute_csum_v4_g(BNT_CTX_TYPE *
     return __bnt_udp__recompute_csum_v4(&udp, &ip4);
 }
 
-__attribute__((noinline, weak)) int __bnt_udp_recompute_csum_v6_g(BNT_CTX_TYPE *ctx,
+__attribute__((noinline, weak, nonnull(1))) int __bnt_udp_recompute_csum_v6_g(BNT_CTX_TYPE *ctx,
                                                               __u32 udp_off, __u32 ip_off)
 {
     bnt_udp udp;
@@ -7571,7 +7570,7 @@ __attribute__((noinline, weak)) int __bnt_udp_recompute_csum_v6_g(BNT_CTX_TYPE *
     return __bnt_udp__recompute_csum_v6(&udp, &ip6);
 }
 
-__attribute__((noinline, weak)) int __bnt_icmp4_recompute_csum_g(BNT_CTX_TYPE *ctx,
+__attribute__((noinline, weak, nonnull(1))) int __bnt_icmp4_recompute_csum_g(BNT_CTX_TYPE *ctx,
                                                              __u32 icmp_off, __u16 icmp_len)
 {
     bnt_icmp4 icmp;
@@ -7581,7 +7580,7 @@ __attribute__((noinline, weak)) int __bnt_icmp4_recompute_csum_g(BNT_CTX_TYPE *c
     return __bnt_icmp4__recompute_csum(&icmp, icmp_len);
 }
 
-__attribute__((noinline, weak)) int __bnt_icmp6_recompute_csum_g(BNT_CTX_TYPE *ctx,
+__attribute__((noinline, weak, nonnull(1))) int __bnt_icmp6_recompute_csum_g(BNT_CTX_TYPE *ctx,
                                                              __u32 icmp_off, __u32 ip_off,
                                                              __u16 icmp_len)
 {
@@ -7605,7 +7604,7 @@ __attribute__((noinline, weak)) int __bnt_icmp6_recompute_csum_g(BNT_CTX_TYPE *c
 /* Fat operation-globals for L4 port rewrites: one global per protocol covers
  * both source and dest (constant offsets selected by is_dest). Single L4 header,
  * 16-bit checksum, direct access. */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_tcp_set_port_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 port, int is_dest)
 {
     struct tcphdr *tcp;
@@ -7618,7 +7617,7 @@ int __bnt_tcp_set_port_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 port, int is_dest)
     tcp->check = __bnt_csum16_update(tcp->check, old, v);
     return BNT_OK;
 }
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_udp_set_port_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 port, int is_dest)
 {
     struct udphdr *udp;
@@ -7697,7 +7696,7 @@ static __always_inline int bnt_tcp__set_dest(bnt_tcp *tcp, __u16 port)
 #if !BNT_INLINE_ALL
 /* Fat operation-global shared by set_seq/set_ack_seq (selected by is_ack):
  * 32-bit field rewrite + L4 checksum, single header, direct access. */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_tcp_set_seq_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 value, int is_ack)
 {
     struct tcphdr *tcp;
@@ -7797,7 +7796,7 @@ static __always_inline int bnt_tcp__set_flags(bnt_tcp *tcp, __u16 flags)
 /* Fat operation-global behind every TCP flag set/clear (one global covers all 18
  * set_ and clear_ APIs): read the data-offset/flags word, toggle the bit, write
  * it back, update the L4 checksum - direct access in one isolated subprogram. */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_tcp_set_flag_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 flag, int enabled)
 {
     struct tcphdr *tcp;
@@ -8195,7 +8194,7 @@ static __always_inline int __bnt_ipv4_update_pseudo32(bnt_ipv4 *ip, __be32 old, 
 #if !BNT_INLINE_ALL
 /* Fat operation-global: read + write + incremental csum in one isolated
  * subprogram via direct packet access (1 bpf2bpf call instead of three). */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv4_set_tos_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 tos)
 {
     struct iphdr *ip;
@@ -8244,7 +8243,7 @@ static __always_inline int bnt_ipv4__set_tos(bnt_ipv4 *ip, __u8 tos)
 }
 
 #if !BNT_INLINE_ALL
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv4_set_ttl_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 ttl)
 {
     struct iphdr *ip;
@@ -8295,7 +8294,7 @@ static __always_inline int bnt_ipv4__set_ttl(bnt_ipv4 *ip, __u8 ttl)
 #if !BNT_INLINE_ALL
 /* Fat operation-global: read TTL, check, write TTL-1 and update csum in one
  * isolated subprogram via direct packet access (1 call instead of ~four). */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv4_dec_ttl_g(BNT_CTX_TYPE *ctx, __u32 off, bool *expired)
 {
     struct iphdr *ip;
@@ -8366,7 +8365,7 @@ static __always_inline int bnt_ipv4__dec_ttl(bnt_ipv4 *ip, bool *expired)
  * and fix the TCP/UDP pseudo-header checksum (protocol is a pseudo-header field).
  * The OLD protocol locates the existing L4 header (L4 offset = off + ihl*4, no
  * walk on IPv4); two straight-line data_ptr, all ip-> fields read first. */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv4_set_protocol_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 protocol)
 {
     struct iphdr *ip;
@@ -8545,7 +8544,7 @@ static __always_inline int bnt_ipv4__set_frag_off(bnt_ipv4 *ip, __u16 frag_off)
 /* Fat operation-global behind all IPv4 fragment-flag set/clear APIs: read the
  * frag-offset word, toggle the flag bit (offset bits preserved), write back,
  * fix the IPv4 checksum - one isolated subprogram, direct access. */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv4_set_frag_flag_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 flag, int enabled)
 {
     struct iphdr *ip;
@@ -8675,7 +8674,7 @@ static __always_inline int bnt_ipv4__set_total_len(bnt_ipv4 *ip, __u16 total_len
  * one isolated subprogram with direct access (two straight-line data_ptr: the
  * IPv4 header, then the L4 checksum word). All ip-> fields are read before the
  * second data_ptr. */
-__attribute__((noinline, weak))
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv4_set_addr_g(BNT_CTX_TYPE *ctx, __u32 off, __be32 addr, int is_daddr)
 {
     struct iphdr *ip;
