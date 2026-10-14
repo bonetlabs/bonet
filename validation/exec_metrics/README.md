@@ -44,9 +44,13 @@ summary. A changed result means one of the two builds is wrong.
 ## Collecting a CSV
 
 ```bash
-python3 collect.py -o results/clang.csv --ref clang20.o \
+python3 collect.py -o results/clang.csv --ref clang20.o --loaded load.txt \
     clang16=clang16.o clang20=clang20.o clang22=clang22.o
 ```
+
+`load.txt` is the output of `tests/globals/build/load_each` run on the same
+objects. It adds a `loaded` column, telling whether the verifier accepted the
+global.
 
 Each row is one configuration and one case. The columns are the static size of
 the global, the executed instructions, stack, csum bytes, return value, one
