@@ -10,6 +10,7 @@
 
 # Local helper binaries
 bnt_examples/verify_load
+tests/globals/build/
 
 # Python virtual environments
 env/

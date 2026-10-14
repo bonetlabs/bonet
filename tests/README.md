@@ -20,6 +20,12 @@ programs:
 - `debug/` covers the optional `bnt_debug.h` event helpers.
 - `common/` contains shared BPF-side test support, including the
   `bnt_test_result` map ABI used by map-backed suites.
+- `globals/` loads every XDP global subprogram on its own, in the default build
+  and with `BNT_STRICT_ALIGN=1` under `BPF_F_STRICT_ALIGNMENT`. The kernel only
+  verifies the globals a program calls, so this catches a global that no other
+  test reaches. It runs on one machine, outside `run_tests.sh`:
+  `make -C globals check` (needs root). The debug-header globals are not
+  included.
 
 Each suite owns a `tests.csv` file. The CSV is loaded on every runner startup
 and describes the object files to attach, the attach type, the traffic protocol,
