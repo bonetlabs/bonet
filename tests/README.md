@@ -26,6 +26,16 @@ programs:
   test reaches. It runs on one machine, outside `run_tests.sh`:
   `make -C globals check` (needs root). The debug-header globals are not
   included.
+- `units/` runs every XDP global on prepared packets with `BPF_PROG_TEST_RUN`
+  and compares the return value, the output buffer and the resulting packet
+  with `expected.json`, in the default build and with `BNT_STRICT_ALIGN=1`. The
+  cases, including error paths, are in `cases.py`. It also runs on one machine:
+  `make -C units check` (needs root). After an intended behaviour change,
+  `make -C units update-expected` records new results from the default build.
+  For the FIB lookups only the return value and the packet are compared, since
+  the lookup result depends on the routing table; for `csum_blk`/`csum_word`
+  the `bpf_csum_diff` value is compared folded to 16 bits, since its 32-bit form
+  changes with the kernel version.
 
 Each suite owns a `tests.csv` file. The CSV is loaded on every runner startup
 and describes the object files to attach, the attach type, the traffic protocol,

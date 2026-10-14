@@ -11,6 +11,8 @@
 # Local helper binaries
 bnt_examples/verify_load
 tests/globals/build/
+tests/units/build/
+__pycache__/
 
 # Python virtual environments
 env/
