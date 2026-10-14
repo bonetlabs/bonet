@@ -2,6 +2,15 @@
 #ifndef BNT_TC_INGRESS_H
 #define BNT_TC_INGRESS_H
 
+/* gcc only: #pragma unroll is clang's (gcc ignores it, as it should), and
+ * -Wmaybe-uninitialized misfires on views that a parse call fills in only on
+ * success. Both are silenced inside the BONet headers only. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunknown-pragmas"
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
+
 /*
  * bnt_tc_ingress.h - verifier-friendly packet parsing helpers for TC ingress.
  *
@@ -403,8 +412,6 @@ static __always_inline int bnt_eth__insert_ipv4(bnt_eth *eth,
     ip.daddr = daddr;
 
     csum = bpf_csum_diff(NULL, 0, (__be32 *)&ip, sizeof(ip), 0);
-    if ((long)csum < 0)
-        return BNT_ERR_WRITE;
     ip.check = __bnt_csum_fold(csum);
 
     ret = bnt_eth__set_ethertype(eth, ETH_P_IP);
@@ -736,5 +743,9 @@ static __always_inline int bnt_eth__insert_mpls(bnt_eth *eth,
         return ret;
     return __bnt_write(eth->__ctx, prefix_len, &lse, sizeof(lse));
 }
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 #endif /* BNT_TC_INGRESS_H */

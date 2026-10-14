@@ -2,6 +2,15 @@
 #ifndef BNT_XDP_H
 #define BNT_XDP_H
 
+/* gcc only: #pragma unroll is clang's (gcc ignores it, as it should), and
+ * -Wmaybe-uninitialized misfires on views that a parse call fills in only on
+ * success. Both are silenced inside the BONet headers only. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunknown-pragmas"
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
+
 /*
  * bnt_xdp.h - verifier-friendly packet parsing helpers for XDP.
  *
@@ -196,6 +205,20 @@ static __always_inline int __bnt_bounds(struct xdp_md *ctx, __u32 off, __u32 len
 #define BNT_XDP_MAX_PACKET_OFFSET 0xffffu
 #endif
 
+/*
+ * gcc assumes the caller zero-extended a 32-bit argument and adds it to a
+ * pointer as is. The verifier does not: a global's arguments are unknown 64-bit
+ * scalars. BNT_ZEXT32(x) zero-extends x in place with one w = w; gcc takes a
+ * 32-bit value as already extended, so the move has to be in asm. The asm also
+ * hides what gcc knows about x, so the checks after it stay. clang always
+ * zero-extends, so it is empty there.
+ */
+#if defined(__GNUC__) && !defined(__clang__)
+#define BNT_ZEXT32(x) asm volatile("{mov32 %0,%0|%w0 = %w0}" : "+r"(x))
+#else
+#define BNT_ZEXT32(x) ((void)(x))
+#endif
+
 static __always_inline int __bnt_data_ptr(struct xdp_md *ctx, __u32 off, __u32 len, void **out)
 {
     unsigned char *base;
@@ -207,6 +230,8 @@ static __always_inline int __bnt_data_ptr(struct xdp_md *ctx, __u32 off, __u32 l
     *out = NULL;
     if (!ctx)
         return BNT_ERR_BAD_ARG;
+    /* Before the checks, so gcc cannot drop them as already proven. */
+    BNT_ZEXT32(off);
     if (len > BNT_XDP_MAX_PACKET_OFFSET)
         return BNT_ERR_TRUNC;
     if (off > BNT_XDP_MAX_PACKET_OFFSET - len)
@@ -1256,8 +1281,6 @@ int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
     __BNT_PKT_STORE(ip->saddr, saddr);
     __BNT_PKT_STORE(ip->daddr, daddr);
     csum = bpf_csum_diff(NULL, 0, (__be32 *)ip, sizeof(*ip), 0);
-    if ((long)csum < 0)
-        return BNT_ERR_WRITE;
     __BNT_PKT_STORE(ip->check, __bnt_csum_fold(csum));
 
     ret = __bnt_data_ptr(ctx, prefix_len - 2, sizeof(__be16), &p);
@@ -1339,8 +1362,6 @@ static __always_inline int bnt_eth__insert_ipv4(bnt_eth *eth,
             h.saddr    = saddr;
             h.daddr    = daddr;
             csum = bpf_csum_diff(NULL, 0, (__be32 *)&h, sizeof(h), 0);
-            if ((long)csum < 0)
-                return BNT_ERR_WRITE;
             h.check = __bnt_csum_fold(csum);
             ret = __bnt_write(eth->__ctx, prefix_len, &h, sizeof(h));
             if (ret)
@@ -2478,5 +2499,9 @@ static __always_inline int bnt_eth__insert_mpls(bnt_eth *eth,
     }
 #endif
 }
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 #endif /* BNT_XDP_H */
