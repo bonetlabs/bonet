@@ -39,8 +39,8 @@
  * steer clang's codegen into shapes the BPF verifier can follow.  They are
  * semantically transparent (no runtime behaviour change) and exist for inline
  * builds that cannot rely on the global sub-program boundary for isolation:
- * older/stricter verifiers (pre-~5.6 kernels, where global sub-programs are
- * unavailable so inline is mandatory) and aggressive compilers.  They add
+ * older/stricter verifiers (kernels before 5.12, where the default global mode
+ * is unavailable so inline is mandatory) and aggressive compilers.  They add
  * processed_insns and stack depth, so they are off by default; in global mode
  * the sub-program boundary provides the same isolation for free.
  *
@@ -71,8 +71,8 @@
 /*
  * Two build knobs:
  *   BNT_INLINE_ALL     0 = global isolation (default), 1 = fully inline.
- *   BNT_LEGACY_KERNEL  set for target kernels without BPF global sub-programs
- *                      (roughly < 5.6).  Forces inline mode AND turns on the
+ *   BNT_LEGACY_KERNEL  set for target kernels older than 5.12, which cannot
+ *                      run the global mode.  Forces inline mode AND turns on the
  *                      inline-hardening barriers — the only configuration that
  *                      verifies on those older kernels.  Set it explicitly (the
  *                      build cannot detect the *target* kernel version); the
@@ -253,6 +253,87 @@ static __always_inline int __bnt_write(struct xdp_md *ctx, __u32 off, const void
     __builtin_memcpy(dst, src, len);
     return BNT_OK;
 }
+
+/*
+ * Packet alignment, see bnt_rw.h. Set here because the wide copies below must
+ * be in place before bnt_rw.h is included.
+ */
+#ifndef BNT_STRICT_ALIGN
+#if defined(__TARGET_ARCH_riscv) || defined(__TARGET_ARCH_loongarch) || \
+    defined(__TARGET_ARCH_mips) || defined(__TARGET_ARCH_sparc)
+#define BNT_STRICT_ALIGN 1
+#else
+#define BNT_STRICT_ALIGN 0
+#endif
+#endif
+
+#if !BNT_INLINE_ALL && !BNT_STRICT_ALIGN
+/*
+ * Global mode without BNT_STRICT_ALIGN: __bnt_read/__bnt_write copy in chunks
+ * as wide as the alignment of the non-packet side's type, instead of byte by
+ * byte. The packet side may be misaligned, which this configuration allows; the
+ * other side keeps its type's alignment, which the verifier always enforces on
+ * the stack. The chunk types are may_alias: the destination is often a struct
+ * or an array of another type, and plain __u32 stores into it would let clang
+ * treat it as never written.
+ */
+typedef __u64 __attribute__((may_alias)) __bnt_chunk64;
+typedef __u32 __attribute__((may_alias)) __bnt_chunk32;
+typedef __u16 __attribute__((may_alias)) __bnt_chunk16;
+
+static __always_inline void __bnt_copy_wide(void *dst, const void *src, __u32 len, __u32 align)
+{
+    __u32 i = 0;
+
+#pragma unroll
+    for (; align >= 8 && i + 8 <= len; i += 8)
+        *(__bnt_chunk64 *)((__u8 *)dst + i) = *(const __bnt_chunk64 *)((const __u8 *)src + i);
+#pragma unroll
+    for (; align >= 4 && i + 4 <= len; i += 4)
+        *(__bnt_chunk32 *)((__u8 *)dst + i) = *(const __bnt_chunk32 *)((const __u8 *)src + i);
+#pragma unroll
+    for (; align >= 2 && i + 2 <= len; i += 2)
+        *(__bnt_chunk16 *)((__u8 *)dst + i) = *(const __bnt_chunk16 *)((const __u8 *)src + i);
+#pragma unroll
+    for (; i < len; i++)
+        ((__u8 *)dst)[i] = ((const __u8 *)src)[i];
+}
+
+static __always_inline int __bnt_read_wide(struct xdp_md *ctx, __u32 off, void *dst,
+                                           __u32 len, __u32 align)
+{
+    void *src;
+    int ret;
+
+    if (!dst)
+        return BNT_ERR_BAD_ARG;
+    ret = __bnt_data_ptr(ctx, off, len, &src);
+    if (ret)
+        return ret;
+    __bnt_copy_wide(dst, src, len, align);
+    return BNT_OK;
+}
+
+static __always_inline int __bnt_write_wide(struct xdp_md *ctx, __u32 off, const void *src,
+                                            __u32 len, __u32 align)
+{
+    void *dst;
+    int ret;
+
+    if (!src)
+        return BNT_ERR_BAD_ARG;
+    ret = __bnt_data_ptr(ctx, off, len, &dst);
+    if (ret)
+        return ret;
+    __bnt_copy_wide(dst, src, len, align);
+    return BNT_OK;
+}
+
+#define __bnt_read(ctx, off, dst, len)                                         \
+    __bnt_read_wide((ctx), (off), (dst), (len), __alignof__(*(dst)))
+#define __bnt_write(ctx, off, src, len)                                        \
+    __bnt_write_wide((ctx), (off), (src), (len), __alignof__(*(src)))
+#endif
 
 /* XDP sees raw pre-GRO packets: standard MTU 1500. */
 #ifndef BNT_MAX_PAYLOAD
@@ -905,7 +986,7 @@ int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci
     ret = __bnt_data_ptr(ctx, off + offsetof(struct ethhdr, h_proto), sizeof(__be16), &p);
     if (ret)
         return ret;
-    proto = *(__be16 *)p;
+    proto = __BNT_PKT_LOAD(*(__be16 *)p);
     outer_proto = bpf_ntohs(proto);
 
     /* Count existing tags so a stack already at the bound is rejected instead
@@ -917,7 +998,7 @@ int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci
         ret = __bnt_data_ptr(ctx, cur + 2, sizeof(__be16), &p);
         if (ret)
             return ret;
-        proto = *(__be16 *)p;
+        proto = __BNT_PKT_LOAD(*(__be16 *)p);
         depth++;
         cur += sizeof(struct bnt_vlan_hdr);
     }
@@ -938,13 +1019,13 @@ int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci
         ret = __bnt_data_ptr(ctx, prefix_len, sizeof(__be32), &p);
         if (ret)
             return ret;
-        *(__be32 *)p = tag;
+        __BNT_PKT_STORE(*(__be32 *)p, tag);
     }
 
     ret = __bnt_data_ptr(ctx, prefix_len - 2, sizeof(__be16), &p);
     if (ret)
         return ret;
-    *(__be16 *)p = bpf_htons(tpid);
+    __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(tpid));
     return BNT_OK;
 }
 #endif
@@ -1025,7 +1106,7 @@ int __bnt_eth_remove_vlan_g(struct xdp_md *ctx, __u32 off)
     ret = __bnt_data_ptr(ctx, off + offsetof(struct ethhdr, h_proto), sizeof(__be16), &p);
     if (ret)
         return ret;
-    outer_proto = bpf_ntohs(*(__be16 *)p);
+    outer_proto = bpf_ntohs(__BNT_PKT_LOAD(*(__be16 *)p));
     if (outer_proto != ETH_P_8021Q && outer_proto != ETH_P_8021AD)
         return BNT_ERR_BAD_PROTO;
 
@@ -1035,12 +1116,12 @@ int __bnt_eth_remove_vlan_g(struct xdp_md *ctx, __u32 off)
                           sizeof(__be16), &p);
     if (ret)
         return ret;
-    encap = *(__be16 *)p;
+    encap = __BNT_PKT_LOAD(*(__be16 *)p);
 
     ret = __bnt_data_ptr(ctx, off + offsetof(struct ethhdr, h_proto), sizeof(__be16), &p);
     if (ret)
         return ret;
-    *(__be16 *)p = encap;
+    __BNT_PKT_STORE(*(__be16 *)p, encap);
 
     return __bnt_shift_remove_4(ctx, vlan_off);
 }
@@ -1122,7 +1203,7 @@ int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
     ret = __bnt_data_ptr(ctx, off + offsetof(struct ethhdr, h_proto), sizeof(__be16), &p);
     if (ret)
         return ret;
-    proto = *(__be16 *)p;
+    proto = __BNT_PKT_LOAD(*(__be16 *)p);
     cur = off + sizeof(struct ethhdr);
     for (i = 0; i < BNT_MAX_VLAN_DEPTH; i++) {
         if (proto != bpf_htons(ETH_P_8021Q) && proto != bpf_htons(ETH_P_8021AD))
@@ -1130,7 +1211,7 @@ int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
         ret = __bnt_data_ptr(ctx, cur + 2, sizeof(__be16), &p);
         if (ret)
             return ret;
-        proto = *(__be16 *)p;
+        proto = __BNT_PKT_LOAD(*(__be16 *)p);
         hlen += 4;
         cur += 4;
     }
@@ -1154,24 +1235,35 @@ int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
     total_len = pkt_len - prefix_len;
     if (total_len < sizeof(struct iphdr) || total_len > 0xffff)
         return BNT_ERR_TRUNC;
-    __builtin_memset(ip, 0, sizeof(*ip));
+    __BNT_PKT_MEMSET0(ip, sizeof(*ip));
+#if BNT_STRICT_ALIGN
+    /* Byte stores through struct iphdr * carry its 4-byte alignment, which lets
+     * clang merge them into one wider, misaligned store. */
+    __BNT_PKT_STORE(*(__u8 *)ip, 0x45);                 /* version 4, IHL 5 */
+#else
     ip->version  = 4;
     ip->ihl      = 5;
-    ip->tot_len  = bpf_htons((__u16)total_len);
-    ip->frag_off = bpf_htons(IP_DF);
+#endif
+    __BNT_PKT_STORE(ip->tot_len, bpf_htons((__u16)total_len));
+    __BNT_PKT_STORE(ip->frag_off, bpf_htons(IP_DF));
+#if BNT_STRICT_ALIGN
+    __BNT_PKT_STORE(ip->ttl, 64);
+    __BNT_PKT_STORE(ip->protocol, protocol);
+#else
     ip->ttl      = 64;
     ip->protocol = protocol;
-    ip->saddr    = saddr;
-    ip->daddr    = daddr;
+#endif
+    __BNT_PKT_STORE(ip->saddr, saddr);
+    __BNT_PKT_STORE(ip->daddr, daddr);
     csum = bpf_csum_diff(NULL, 0, (__be32 *)ip, sizeof(*ip), 0);
     if ((long)csum < 0)
         return BNT_ERR_WRITE;
-    ip->check = __bnt_csum_fold(csum);
+    __BNT_PKT_STORE(ip->check, __bnt_csum_fold(csum));
 
     ret = __bnt_data_ptr(ctx, prefix_len - 2, sizeof(__be16), &p);
     if (ret)
         return ret;
-    *(__be16 *)p = bpf_htons(ETH_P_IP);
+    __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(ETH_P_IP));
     return BNT_OK;
 }
 #endif
@@ -1285,7 +1377,7 @@ int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
     ret = __bnt_data_ptr(ctx, off + offsetof(struct ethhdr, h_proto), sizeof(__be16), &p);
     if (ret)
         return ret;
-    proto = *(__be16 *)p;
+    proto = __BNT_PKT_LOAD(*(__be16 *)p);
     cur = off + sizeof(struct ethhdr);
     for (i = 0; i < BNT_MAX_VLAN_DEPTH; i++) {
         if (proto != bpf_htons(ETH_P_8021Q) && proto != bpf_htons(ETH_P_8021AD))
@@ -1293,7 +1385,7 @@ int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
         ret = __bnt_data_ptr(ctx, cur + 2, sizeof(__be16), &p);
         if (ret)
             return ret;
-        proto = *(__be16 *)p;
+        proto = __BNT_PKT_LOAD(*(__be16 *)p);
         hlen += 4;
         cur += 4;
     }
@@ -1319,18 +1411,26 @@ int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
     payload_len = pkt_len - prefix_len - sizeof(struct ipv6hdr);
     if (payload_len > 0xffff)
         return BNT_ERR_TRUNC;
-    __builtin_memset(ip, 0, sizeof(*ip));
+    __BNT_PKT_MEMSET0(ip, sizeof(*ip));
+#if BNT_STRICT_ALIGN
+    /* See __bnt_eth_insert_ipv4_g: keep the byte stores from being merged. */
+    __BNT_PKT_STORE(*(__u8 *)ip, 0x60);                 /* version 6 */
+    __BNT_PKT_STORE(ip->payload_len, bpf_htons((__u16)payload_len));
+    __BNT_PKT_STORE(ip->nexthdr, nexthdr);
+    __BNT_PKT_STORE(ip->hop_limit, 64);
+#else
     ip->version     = 6;
-    ip->payload_len = bpf_htons((__u16)payload_len);
+    __BNT_PKT_STORE(ip->payload_len, bpf_htons((__u16)payload_len));
     ip->nexthdr     = nexthdr;
     ip->hop_limit   = 64;
-    __builtin_memcpy(&ip->saddr, saddr, sizeof(ip->saddr));
-    __builtin_memcpy(&ip->daddr, daddr, sizeof(ip->daddr));
+#endif
+    __BNT_PKT_MEMCPY(&ip->saddr, saddr, sizeof(ip->saddr));
+    __BNT_PKT_MEMCPY(&ip->daddr, daddr, sizeof(ip->daddr));
 
     ret = __bnt_data_ptr(ctx, prefix_len - 2, sizeof(__be16), &p);
     if (ret)
         return ret;
-    *(__be16 *)p = bpf_htons(ETH_P_IPV6);
+    __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(ETH_P_IPV6));
     return BNT_OK;
 }
 #endif
@@ -1433,7 +1533,7 @@ int __bnt_eth_remove_ipv4_g(struct xdp_md *ctx, __u32 off)
     ret = __bnt_data_ptr(ctx, off + offsetof(struct ethhdr, h_proto), sizeof(__be16), &p);
     if (ret)
         return ret;
-    proto = *(__be16 *)p;
+    proto = __BNT_PKT_LOAD(*(__be16 *)p);
     cur = off + sizeof(struct ethhdr);
     for (i = 0; i < BNT_MAX_VLAN_DEPTH; i++) {
         if (proto != bpf_htons(ETH_P_8021Q) && proto != bpf_htons(ETH_P_8021AD))
@@ -1443,7 +1543,7 @@ int __bnt_eth_remove_ipv4_g(struct xdp_md *ctx, __u32 off)
                               sizeof(__be16), &p);
         if (ret)
             return ret;
-        proto = *(__be16 *)p;
+        proto = __BNT_PKT_LOAD(*(__be16 *)p);
         hlen += sizeof(struct bnt_vlan_hdr);
         cur += sizeof(struct bnt_vlan_hdr);
         vlan_depth++;
@@ -1487,7 +1587,7 @@ int __bnt_eth_remove_ipv4_g(struct xdp_md *ctx, __u32 off)
     ret = __bnt_data_ptr(ctx, eproto_off, sizeof(__be16), &p);
     if (ret)
         return ret;
-    *(__be16 *)p = bpf_htons(new_ethertype);
+    __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(new_ethertype));
 
     return __bnt_shift_remove_20(ctx, prefix_len);
 }
@@ -1576,7 +1676,7 @@ int __bnt_eth_remove_ipv6_g(struct xdp_md *ctx, __u32 off)
     ret = __bnt_data_ptr(ctx, off + offsetof(struct ethhdr, h_proto), sizeof(__be16), &p);
     if (ret)
         return ret;
-    proto = *(__be16 *)p;
+    proto = __BNT_PKT_LOAD(*(__be16 *)p);
     cur = off + sizeof(struct ethhdr);
     for (i = 0; i < BNT_MAX_VLAN_DEPTH; i++) {
         if (proto != bpf_htons(ETH_P_8021Q) && proto != bpf_htons(ETH_P_8021AD))
@@ -1586,7 +1686,7 @@ int __bnt_eth_remove_ipv6_g(struct xdp_md *ctx, __u32 off)
                               sizeof(__be16), &p);
         if (ret)
             return ret;
-        proto = *(__be16 *)p;
+        proto = __BNT_PKT_LOAD(*(__be16 *)p);
         hlen += sizeof(struct bnt_vlan_hdr);
         cur += sizeof(struct bnt_vlan_hdr);
         vlan_depth++;
@@ -1630,7 +1730,7 @@ int __bnt_eth_remove_ipv6_g(struct xdp_md *ctx, __u32 off)
     ret = __bnt_data_ptr(ctx, eproto_off, sizeof(__be16), &p);
     if (ret)
         return ret;
-    *(__be16 *)p = bpf_htons(new_ethertype);
+    __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(new_ethertype));
 
     return __bnt_shift_remove_40(ctx, prefix_len);
 }
@@ -2024,7 +2124,7 @@ int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
     if (((*(__u8 *)hdr) >> 4) != 6)
         return BNT_ERR_BAD_PROTO;
     orig_nexthdr = hdr->nexthdr;
-    old_plen     = bpf_ntohs(hdr->payload_len);
+    old_plen     = bpf_ntohs(__BNT_PKT_LOAD(hdr->payload_len));
     if ((__u32)old_plen + srh_size > 0xffffu)
         return BNT_ERR_TRUNC;
     new_plen = (__u16)(old_plen + (__u16)srh_size);
@@ -2045,9 +2145,9 @@ int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
         return ret;
     hdr = (struct ipv6hdr *)base;
     hdr->nexthdr     = NEXTHDR_ROUTING;
-    hdr->payload_len = bpf_htons(new_plen);
+    __BNT_PKT_STORE(hdr->payload_len, bpf_htons(new_plen));
     srh = (struct bnt_sr_hdr *)((__u8 *)base + sizeof(struct ipv6hdr));
-    __builtin_memset(srh, 0, sizeof(*srh));
+    __BNT_PKT_MEMSET0(srh, sizeof(*srh));
     srh->nexthdr       = orig_nexthdr;
     srh->hdrlen        = (__u8)(n_segs * 2u);
     srh->type          = 4;
@@ -2055,7 +2155,11 @@ int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
     srh->first_segment = (__u8)(n_segs - 1);
 
     segs_off = off + (__u32)sizeof(struct ipv6hdr) + (__u32)sizeof(struct bnt_sr_hdr);
+    /* clang 16/17 cannot fully unroll this loop and warn about the pragma; it
+     * verifies as a bounded loop there. */
+#if !defined(__clang_major__) || __clang_major__ >= 18
 #pragma unroll
+#endif
     for (i = 0; i < BNT_SRV6_MAX_SEGS; i++) {
         __u8 rev;
         struct in6_addr *sp;
@@ -2081,7 +2185,7 @@ int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
         ret = __bnt_data_ptr(ctx, so, sizeof(struct in6_addr), (void **)&sp);
         if (ret)
             return ret;
-        __builtin_memcpy(sp, &segs->s[rev], sizeof(struct in6_addr));
+        __BNT_PKT_MEMCPY(sp, &segs->s[rev], sizeof(struct in6_addr));
     }
     return BNT_OK;
 }
@@ -2269,7 +2373,7 @@ int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc,
     ret = __bnt_data_ptr(ctx, off + offsetof(struct ethhdr, h_proto), sizeof(__be16), &p);
     if (ret)
         return ret;
-    proto = *(__be16 *)p;
+    proto = __BNT_PKT_LOAD(*(__be16 *)p);
     cur = off + sizeof(struct ethhdr);
     for (i = 0; i < BNT_MAX_VLAN_DEPTH; i++) {
         if (proto != bpf_htons(ETH_P_8021Q) && proto != bpf_htons(ETH_P_8021AD))
@@ -2277,7 +2381,7 @@ int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc,
         ret = __bnt_data_ptr(ctx, cur + 2, sizeof(__be16), &p);
         if (ret)
             return ret;
-        proto = *(__be16 *)p;
+        proto = __BNT_PKT_LOAD(*(__be16 *)p);
         hlen += 4;
         cur += 4;
     }
@@ -2301,11 +2405,11 @@ int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc,
     ret = __bnt_data_ptr(ctx, prefix_len, sizeof(__be32), &p);
     if (ret)
         return ret;
-    *(__be32 *)p = lse;
+    __BNT_PKT_STORE(*(__be32 *)p, lse);
     ret = __bnt_data_ptr(ctx, prefix_len - 2, sizeof(__be16), &p);
     if (ret)
         return ret;
-    *(__be16 *)p = bpf_htons(ETH_P_MPLS_UC);
+    __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(ETH_P_MPLS_UC));
     return BNT_OK;
 }
 #endif

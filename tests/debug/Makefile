@@ -4,7 +4,7 @@ SYSINC ?= /usr/include/$(shell uname -m)-linux-gnu
 ROOT   ?= ../..
 
 BPF_CFLAGS := -O2 -g -Wall -Wextra -Werror=incompatible-pointer-types \
-              -target bpf -D__TARGET_ARCH_$(ARCH) \
+              -target bpf -mcpu=v3 -D__TARGET_ARCH_$(ARCH) \
               -I$(ROOT)/src -I$(ROOT)/tests/common -I$(SYSINC)
 
 BPF_SOURCES  := $(wildcard *.c)

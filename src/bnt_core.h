@@ -119,6 +119,17 @@
 #define BNT_LEGACY_KERNEL 0
 #endif
 
+/*
+ * Global mode is verified with -mcpu=v3 (32-bit ALU and jumps). Below it,
+ * clang 16/17 rebuild packet pointers after their bounds check in the insert
+ * globals under BNT_STRICT_ALIGN, and the verifier rejects them. clang 18+
+ * reports the level in __BPF_CPU_VERSION__; clang 16/17 do not, so for them
+ * the requirement is only documented.
+ */
+#if !BNT_INLINE_ALL && defined(__BPF_CPU_VERSION__) && __BPF_CPU_VERSION__ < 3
+#error "BONet global mode needs -mcpu=v3 or newer (or set BNT_INLINE_ALL=1)"
+#endif
+
 #ifndef BNT_MAX_VLAN_DEPTH
 #define BNT_MAX_VLAN_DEPTH 2
 #endif
@@ -132,7 +143,9 @@
 /* Typed MAC wrapper — needed for BTF-correct global function signatures.
  * Raw unsigned char[6] decays to unsigned char * in a function parameter,
  * losing size information in the BTF encoding. */
-struct __bnt_mac { unsigned char addr[6]; };
+/* 4-byte aligned so the MAC globals can copy it as 4 + 2 bytes; it is only ever
+ * a temporary owned by the wrappers, never the caller's array. */
+struct __bnt_mac { unsigned char addr[6]; } __attribute__((aligned(4)));
 
 #define BNT_IPV4(a, b, c, d) \
     ((__be32)bpf_htonl((((__u32)(a)) << 24) | (((__u32)(b)) << 16) | \
@@ -487,6 +500,19 @@ static __always_inline int __bnt_is_ipv6_ext(__u8 nexthdr)
     }
 }
 
+/* Same set as __bnt_is_ipv6_ext, with the values below 64 tested by one mask
+ * first. Used by the global-mode fast paths: there clang lowers the switch so
+ * that a plain next header (TCP, UDP, ICMPv6) runs both halves of it. */
+static __always_inline int __bnt_is_ipv6_ext_split(__u8 nexthdr)
+{
+    if (nexthdr < 64)
+        return (int)((((1ULL << NEXTHDR_HOP) | (1ULL << NEXTHDR_ROUTING) |
+                       (1ULL << NEXTHDR_FRAGMENT) | (1ULL << NEXTHDR_AUTH) |
+                       (1ULL << NEXTHDR_DEST)) >> nexthdr) & 1);
+    return nexthdr == NEXTHDR_MOBILITY || nexthdr == NEXTHDR_HIP ||
+           nexthdr == NEXTHDR_SHIM;
+}
+
 static __always_inline int __bnt_ipv4_l4_has_pseudo_csum(__u8 protocol)
 {
     return protocol == IPPROTO_TCP || protocol == IPPROTO_UDP;
@@ -508,7 +534,13 @@ static __always_inline int __bnt_ipv6_l4_maybe_has_pseudo_csum(const struct __bn
 
 static __always_inline int __bnt_eth_meta(const bnt_eth *eth, struct __bnt_eth_meta *m)
 {
+#if !BNT_INLINE_ALL
+    /* Global mode (the ctx_find globals inline this): read the fields from a
+     * bounded packet pointer instead of copying each header. */
+    const struct ethhdr *h;
+#else
     struct ethhdr h;
+#endif
     __be16 proto;
     __u32 cur;
     __u32 i;
@@ -519,30 +551,48 @@ static __always_inline int __bnt_eth_meta(const bnt_eth *eth, struct __bnt_eth_m
 
     __builtin_memset(m, 0, sizeof(*m));
 
+#if !BNT_INLINE_ALL
+    ret = __bnt_data_ptr(eth->__ctx, eth->__off, sizeof(*h), (void **)&h);
+    if (ret)
+        return ret;
+    proto = __BNT_PKT_LOAD(h->h_proto);
+#else
     ret = __bnt_read(eth->__ctx, eth->__off, &h, sizeof(h));
     if (ret)
         return ret;
+    proto = h.h_proto;
+#endif
 
     m->hlen = sizeof(struct ethhdr);
-    m->proto = bpf_ntohs(h.h_proto);
+    m->proto = bpf_ntohs(proto);
     cur = eth->__off + sizeof(struct ethhdr);
-    proto = h.h_proto;
 
 #pragma unroll
     for (i = 0; i < BNT_MAX_VLAN_DEPTH; i++) {
+#if !BNT_INLINE_ALL
+        const struct bnt_vlan_hdr *vh;
+#else
         struct bnt_vlan_hdr vh;
+#endif
 
         if (proto != bpf_htons(ETH_P_8021Q) && proto != bpf_htons(ETH_P_8021AD))
             break;
 
+#if !BNT_INLINE_ALL
+        ret = __bnt_data_ptr(eth->__ctx, cur, sizeof(*vh), (void **)&vh);
+        if (ret)
+            return ret;
+        m->vlan_tci[i] = bpf_ntohs(__BNT_PKT_LOAD(vh->h_vlan_TCI));
+        proto = __BNT_PKT_LOAD(vh->h_vlan_encapsulated_proto);
+#else
         ret = __bnt_read(eth->__ctx, cur, &vh, sizeof(vh));
         if (ret)
             return ret;
-
         m->vlan_tci[i] = bpf_ntohs(vh.h_vlan_TCI);
+        proto = vh.h_vlan_encapsulated_proto;
+#endif
         m->vlan_depth++;
         m->hlen += sizeof(struct bnt_vlan_hdr);
-        proto = vh.h_vlan_encapsulated_proto;
         cur += sizeof(struct bnt_vlan_hdr);
     }
 
@@ -596,7 +646,13 @@ static __always_inline int __bnt_ipv4_meta(const bnt_ipv4 *ip, struct __bnt_ipv4
 
 static __always_inline int __bnt_ipv6_meta(const bnt_ipv6 *ip6, struct __bnt_ipv6_meta *m)
 {
+#if !BNT_INLINE_ALL
+    /* Global mode (the ctx_find globals inline this): read the fields from a
+     * bounded packet pointer instead of copying each header. */
+    const struct ipv6hdr *h;
+#else
     struct ipv6hdr h;
+#endif
     __u8 first;
     __u8 nexthdr;
     __u32 cur;
@@ -606,6 +662,16 @@ static __always_inline int __bnt_ipv6_meta(const bnt_ipv6 *ip6, struct __bnt_ipv
     if (!ip6 || !m)
         return BNT_ERR_BAD_ARG;
 
+#if !BNT_INLINE_ALL
+    ret = __bnt_data_ptr(ip6->__ctx, ip6->__off, sizeof(*h), (void **)&h);
+    if (ret)
+        return ret;
+
+    first = *(const __u8 *)h;
+    if ((first >> 4) != 6)
+        return BNT_ERR_BAD_PROTO;
+    nexthdr = h->nexthdr;
+#else
     ret = __bnt_read(ip6->__ctx, ip6->__off, &h, sizeof(h));
     if (ret)
         return ret;
@@ -613,8 +679,10 @@ static __always_inline int __bnt_ipv6_meta(const bnt_ipv6 *ip6, struct __bnt_ipv
     first = *(__u8 *)&h;
     if ((first >> 4) != 6)
         return BNT_ERR_BAD_PROTO;
+    nexthdr = h.nexthdr;
+#endif
 
-    m->l4_proto = h.nexthdr;
+    m->l4_proto = nexthdr;
     m->frag_hdr_off = 0;
     m->ext_depth = 0;
     m->has_fragment_hdr = 0;
@@ -623,17 +691,32 @@ static __always_inline int __bnt_ipv6_meta(const bnt_ipv6 *ip6, struct __bnt_ipv
     m->frag_off_flags = 0;
 
     cur = ip6->__off + sizeof(struct ipv6hdr);
-    nexthdr = h.nexthdr;
+
+#if !BNT_INLINE_ALL
+    /* Common case, no extension headers: one test, no walk. */
+    if (!__bnt_is_ipv6_ext_split(nexthdr)) {
+        m->next_off = cur;
+        return BNT_OK;
+    }
+#endif
 
 #pragma unroll
     for (i = 0; i < BNT_MAX_IPV6_EXT_DEPTH; i++) {
+#if !BNT_INLINE_ALL
+        const __u8 *ext;
+#else
         __u8 ext[8];
+#endif
         __u32 ext_len;
 
         if (!__bnt_is_ipv6_ext(nexthdr))
             break;
 
+#if !BNT_INLINE_ALL
+        ret = __bnt_data_ptr(ip6->__ctx, cur, 8, (void **)&ext);
+#else
         ret = __bnt_read(ip6->__ctx, cur, ext, sizeof(ext));
+#endif
         if (ret)
             return ret;
 
@@ -790,35 +873,71 @@ static __always_inline __u32 __bnt_arp_tpa_off(const bnt_arp *arp, const struct 
  */
 #if !BNT_INLINE_ALL
 
+/* The read globals keep the bnt_rw.h output convention (a non-NULL destination
+ * is zero on failure) but zero it only when the read fails: __bnt_read writes
+ * nothing on failure and the whole destination on success. */
 __attribute__((noinline, weak, nonnull(1))) int __bnt_read_u8_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 *out)
 {
-    return __bnt_read_u8(ctx, off, out);
+    int ret;
+
+    if (!out)
+        return BNT_ERR_BAD_ARG;
+    ret = __bnt_read(ctx, off, out, sizeof(*out));
+    if (ret)
+        *out = 0;
+    return ret;
 }
 
 __attribute__((noinline, weak, nonnull(1))) int __bnt_read_be16_g(BNT_CTX_TYPE *ctx, __u32 off, __be16 *out)
 {
-    return __bnt_read_be16(ctx, off, out);
+    int ret;
+
+    if (!out)
+        return BNT_ERR_BAD_ARG;
+    ret = __bnt_read(ctx, off, out, sizeof(*out));
+    if (ret)
+        *out = 0;
+    return ret;
 }
 
 __attribute__((noinline, weak, nonnull(1))) int __bnt_read_be32_g(BNT_CTX_TYPE *ctx, __u32 off, __be32 *out)
 {
-    return __bnt_read_be32(ctx, off, out);
+    int ret;
+
+    if (!out)
+        return BNT_ERR_BAD_ARG;
+    ret = __bnt_read(ctx, off, out, sizeof(*out));
+    if (ret)
+        *out = 0;
+    return ret;
 }
 
 __attribute__((noinline, weak, nonnull(1))) int __bnt_read_mac_g(BNT_CTX_TYPE *ctx, __u32 off, struct __bnt_mac *out)
 {
+    int ret;
+
     if (!out)
         return BNT_ERR_BAD_ARG;
-    __builtin_memset(out->addr, 0, BNT_MAC_LEN);
-    return __bnt_read(ctx, off, out->addr, BNT_MAC_LEN);
+#if !BNT_STRICT_ALIGN
+    ret = __bnt_read_wide(ctx, off, out->addr, BNT_MAC_LEN, __alignof__(*out));
+#else
+    ret = __bnt_read(ctx, off, out->addr, BNT_MAC_LEN);
+#endif
+    if (ret)
+        __builtin_memset(out->addr, 0, BNT_MAC_LEN);
+    return ret;
 }
 
 __attribute__((noinline, weak, nonnull(1))) int __bnt_read_in6_g(BNT_CTX_TYPE *ctx, __u32 off, struct in6_addr *out)
 {
+    int ret;
+
     if (!out)
         return BNT_ERR_BAD_ARG;
-    __builtin_memset(out, 0, sizeof(*out));
-    return __bnt_read(ctx, off, out, sizeof(*out));
+    ret = __bnt_read(ctx, off, out, sizeof(*out));
+    if (ret)
+        __builtin_memset(out, 0, sizeof(*out));
+    return ret;
 }
 
 __attribute__((noinline, weak, nonnull(1))) int __bnt_write_u8_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 val)
@@ -840,7 +959,11 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_write_mac_g(BNT_CTX_TYPE *
 {
     if (!in)
         return BNT_ERR_BAD_ARG;
+#if !BNT_STRICT_ALIGN
+    return __bnt_write_wide(ctx, off, in->addr, BNT_MAC_LEN, __alignof__(*in));
+#else
     return __bnt_write(ctx, off, in->addr, BNT_MAC_LEN);
+#endif
 }
 
 __attribute__((noinline, weak, nonnull(1))) int __bnt_write_in6_g(BNT_CTX_TYPE *ctx, __u32 off, const struct in6_addr *in)
@@ -920,8 +1043,8 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_ipv4_next_off_g(BNT_CTX_TY
     if (hlen < sizeof(struct iphdr))
         return BNT_ERR_BAD_PROTO;
 
-    total_len = bpf_ntohs(ip->tot_len);
-    frag      = bpf_ntohs(ip->frag_off);
+    total_len = bpf_ntohs(__BNT_PKT_LOAD(ip->tot_len));
+    frag      = bpf_ntohs(__BNT_PKT_LOAD(ip->frag_off));
 
     /* With options (hlen > 20), confirm the full variable-length header is present. */
     if (hlen > sizeof(struct iphdr)) {
@@ -968,8 +1091,8 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_ipv4_next_proto_off_g(BNT_
     if (hlen < sizeof(struct iphdr))
         return BNT_ERR_BAD_PROTO;
 
-    total_len = bpf_ntohs(ip->tot_len);
-    frag      = bpf_ntohs(ip->frag_off);
+    total_len = bpf_ntohs(__BNT_PKT_LOAD(ip->tot_len));
+    frag      = bpf_ntohs(__BNT_PKT_LOAD(ip->frag_off));
     protocol  = ip->protocol;
 
     /* With options (hlen > 20), confirm the full variable-length header is present. */
@@ -1169,7 +1292,7 @@ static __always_inline int __bnt_ipv6_fill_meta(BNT_CTX_TYPE *ctx, __u32 off,
 {
     __u8 first;
     __u8 nexthdr;
-    __u8 hbuf[8];
+    const __u8 *h;
     __u32 cur;
     __u32 i;
     int ret;
@@ -1178,20 +1301,26 @@ static __always_inline int __bnt_ipv6_fill_meta(BNT_CTX_TYPE *ctx, __u32 off,
         return BNT_ERR_BAD_ARG;
     __builtin_memset(m, 0, sizeof(*m));
 
-    /* version byte (0) and nexthdr (6) live in the first 8 bytes: a single
-     * straight-line data_ptr read recovers both without a nested global and
+    /* version byte (0) and nexthdr (6) live in the first 8 bytes: one
+     * straight-line data_ptr recovers both without a nested global and
      * without the two-direct-reads double-materialization (F5). */
-    ret = __bnt_read(ctx, off, hbuf, sizeof(hbuf));
+    ret = __bnt_data_ptr(ctx, off, 8, (void **)&h);
     if (ret)
         return ret;
-    first = hbuf[0];
+    first = h[0];
     if ((first >> 4) != 6)
         return BNT_ERR_BAD_PROTO;
-    nexthdr = hbuf[offsetof(struct ipv6hdr, nexthdr)];
+    nexthdr = h[offsetof(struct ipv6hdr, nexthdr)];
 
     m->l4_proto     = nexthdr;
     m->l4_off_valid = 1;
     cur = off + sizeof(struct ipv6hdr);
+
+    /* Common case, no extension headers: one test, no walk. */
+    if (!__bnt_is_ipv6_ext_split(nexthdr)) {
+        m->next_off = cur;
+        return BNT_OK;
+    }
 
     for (i = 0; i < BNT_MAX_IPV6_EXT_DEPTH; i++) {
         __u8 ext0;
@@ -1284,8 +1413,8 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_arp_meta_g(BNT_CTX_TYPE *c
 
     hln = a->ar_hln;
     pln = a->ar_pln;
-    m->htype = bpf_ntohs(a->ar_hrd);
-    m->ptype = bpf_ntohs(a->ar_pro);
+    m->htype = bpf_ntohs(__BNT_PKT_LOAD(a->ar_hrd));
+    m->ptype = bpf_ntohs(__BNT_PKT_LOAD(a->ar_pro));
 
     hlen = (__u32)sizeof(struct bnt_arp_hdr) + 2u * (__u32)hln + 2u * (__u32)pln;
 
@@ -1335,8 +1464,8 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_ipv4_meta_g(BNT_CTX_TYPE *
     if (hlen < sizeof(struct iphdr))
         return BNT_ERR_BAD_PROTO;
 
-    total_len = bpf_ntohs(ip->tot_len);
-    frag      = bpf_ntohs(ip->frag_off);
+    total_len = bpf_ntohs(__BNT_PKT_LOAD(ip->tot_len));
+    frag      = bpf_ntohs(__BNT_PKT_LOAD(ip->frag_off));
     protocol  = ip->protocol;
 
     /* With options (hlen > 20), confirm the full variable-length header is present. */
@@ -2511,7 +2640,7 @@ int __bnt_ipv6_set_frag_off_flags_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 value)
     ret = __bnt_data_ptr(ctx, meta.frag_hdr_off + 2, sizeof(__be16), &p);
     if (ret)
         return ret;
-    *(__be16 *)p = bpf_htons(value);
+    __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(value));
     return BNT_OK;
 }
 __attribute__((noinline, weak, nonnull(1)))
@@ -2531,7 +2660,7 @@ int __bnt_ipv6_set_frag_flag_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 flag, int ena
     ret = __bnt_data_ptr(ctx, meta.frag_hdr_off + 2, sizeof(__be16), &p);
     if (ret)
         return ret;
-    *(__be16 *)p = bpf_htons(w);
+    __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(w));
     return BNT_OK;
 }
 #endif
@@ -2658,7 +2787,7 @@ static __always_inline int bnt_ipv6__get_daddr(const bnt_ipv6 *ip6, struct in6_a
 __attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv4_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib4 *fib)
 {
-    struct iphdr h;
+    const struct iphdr *ip;
     __u8 vihl;
     __u32 hlen;
     __u16 total_len;
@@ -2668,11 +2797,12 @@ int __bnt_ipv4_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib4 *fib)
         return BNT_ERR_BAD_ARG;
     __builtin_memset(fib, 0, sizeof(*fib));
 
-    ret = __bnt_read(ctx, ip_off, &h, sizeof(h));
+    /* One bounded packet pointer, fields read directly (no header copy). */
+    ret = __bnt_data_ptr(ctx, ip_off, sizeof(*ip), (void **)&ip);
     if (ret)
         return ret;
 
-    vihl = *(__u8 *)&h;
+    vihl = *(const __u8 *)ip;
     if ((vihl >> 4) != 4)
         return BNT_ERR_BAD_PROTO;
     hlen = (__u32)(vihl & 0x0f) * 4;
@@ -2684,17 +2814,17 @@ int __bnt_ipv4_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib4 *fib)
     ret = __bnt_bounds(ctx, ip_off, hlen);
     if (ret)
         return ret;
-    total_len = bpf_ntohs(h.tot_len);
+    total_len = bpf_ntohs(__BNT_PKT_LOAD(ip->tot_len));
     if (total_len < hlen)
         return BNT_ERR_BAD_PROTO;
 
     fib->__fib.family      = AF_INET;
-    fib->__fib.l4_protocol = h.protocol;
+    fib->__fib.l4_protocol = ip->protocol;
     fib->__fib.tot_len     = total_len;
     fib->__fib.ifindex     = ctx->ingress_ifindex;
-    fib->__fib.tos         = h.tos;
-    fib->__fib.ipv4_src    = h.saddr;
-    fib->__fib.ipv4_dst    = h.daddr;
+    fib->__fib.tos         = ip->tos;
+    fib->__fib.ipv4_src    = __BNT_PKT_LOAD(ip->saddr);
+    fib->__fib.ipv4_dst    = __BNT_PKT_LOAD(ip->daddr);
     fib->__status = bpf_fib_lookup(ctx, &fib->__fib, sizeof(fib->__fib), 0);
     return BNT_OK;
 }
@@ -2778,8 +2908,7 @@ static __always_inline int bnt_ipv4__fib_lookup(const bnt_ipv4 *ip, bnt_fib4 *fi
 __attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv6_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib6 *fib)
 {
-    struct ipv6hdr h = {};
-    __be32 vtc_flow;
+    const struct ipv6hdr *ip6;
     __u8 first;
     int ret;
 
@@ -2787,25 +2916,23 @@ int __bnt_ipv6_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib6 *fib)
         return BNT_ERR_BAD_ARG;
     __builtin_memset(fib, 0, sizeof(*fib));
 
-    ret = __bnt_read(ctx, ip_off, &h, sizeof(h));
+    /* One bounded packet pointer, fields read directly (no header copy). */
+    ret = __bnt_data_ptr(ctx, ip_off, sizeof(*ip6), (void **)&ip6);
     if (ret)
         return ret;
 
-    first = *(__u8 *)&h;
+    first = *(const __u8 *)ip6;
     if ((first >> 4) != 6)
         return BNT_ERR_BAD_PROTO;
 
-    ret = __bnt_read_be32(ctx, ip_off, &vtc_flow);
-    if (ret)
-        return ret;
-
     fib->__fib.family      = AF_INET6;
-    fib->__fib.l4_protocol = h.nexthdr;
-    fib->__fib.tot_len     = bpf_ntohs(h.payload_len) + (__u16)sizeof(struct ipv6hdr);
+    fib->__fib.l4_protocol = ip6->nexthdr;
+    fib->__fib.tot_len     = bpf_ntohs(__BNT_PKT_LOAD(ip6->payload_len)) +
+                             (__u16)sizeof(struct ipv6hdr);
     fib->__fib.ifindex     = ctx->ingress_ifindex;
-    fib->__fib.flowinfo    = vtc_flow & bpf_htonl(0x0fffffff);
-    __builtin_memcpy(fib->__fib.ipv6_src, &h.saddr, sizeof(fib->__fib.ipv6_src));
-    __builtin_memcpy(fib->__fib.ipv6_dst, &h.daddr, sizeof(fib->__fib.ipv6_dst));
+    fib->__fib.flowinfo    = __BNT_PKT_LOAD(*(const __be32 *)ip6) & bpf_htonl(0x0fffffff);
+    __BNT_PKT_MEMCPY(fib->__fib.ipv6_src, &ip6->saddr, sizeof(fib->__fib.ipv6_src));
+    __BNT_PKT_MEMCPY(fib->__fib.ipv6_dst, &ip6->daddr, sizeof(fib->__fib.ipv6_dst));
     fib->__status = bpf_fib_lookup(ctx, &fib->__fib, sizeof(fib->__fib), 0);
     return BNT_OK;
 }
@@ -3088,8 +3215,13 @@ int __bnt_ipv6_set_addr_g(BNT_CTX_TYPE *ctx, __u32 off,
     if (ret)
         return ret;
 
-    if (is_daddr) { oldv = ip6->daddr; ip6->daddr = newv; }
-    else          { oldv = ip6->saddr; ip6->saddr = newv; }
+    if (is_daddr) {
+        __BNT_PKT_ASSIGN(oldv, ip6->daddr);
+        __BNT_PKT_ASSIGN(ip6->daddr, newv);
+    } else {
+        __BNT_PKT_ASSIGN(oldv, ip6->saddr);
+        __BNT_PKT_ASSIGN(ip6->saddr, newv);
+    }
 
     nexthdr = ip6->nexthdr;
     if (__bnt_is_ipv6_ext(nexthdr)) {
@@ -3113,7 +3245,7 @@ int __bnt_ipv6_set_addr_g(BNT_CTX_TYPE *ctx, __u32 off,
         if (ret)
             return ret;
         {
-            __be16 c   = *(__be16 *)p;
+            __be16 c   = __BNT_PKT_LOAD(*(__be16 *)p);
             int    udp = (meta.l4_proto == IPPROTO_UDP);
             if (!(udp && c == 0)) {                      /* UDP checksum 0 = none */
 #pragma unroll
@@ -3124,7 +3256,7 @@ int __bnt_ipv6_set_addr_g(BNT_CTX_TYPE *ctx, __u32 off,
                     c = __bnt_csum32_update(c, from, to);
                 }
                 if (udp && c == 0) c = bpf_htons(0xffff);
-                *(__be16 *)p = c;
+                __BNT_PKT_STORE(*(__be16 *)p, c);
             }
         }
     }
@@ -4058,10 +4190,10 @@ int __bnt_icmp_set_typecode_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 value, int is_c
     int ret = __bnt_data_ptr(ctx, off, 8, (void **)&p);
     if (ret)
         return ret;
-    old = *(__be16 *)p;                         /* type | code */
+    old = __BNT_PKT_LOAD(*(__be16 *)p);                         /* type | code */
     if (is_code) { p[1] = value; neww = bpf_htons((bpf_ntohs(old) & 0xff00) | value); }
     else         { p[0] = value; neww = bpf_htons(((__u16)value << 8) | (bpf_ntohs(old) & 0x00ff)); }
-    *(__be16 *)(p + 2) = __bnt_csum16_update(*(__be16 *)(p + 2), old, neww);
+    __BNT_PKT_STORE(*(__be16 *)(p + 2), __bnt_csum16_update(__BNT_PKT_LOAD(*(__be16 *)(p + 2)), old, neww));
     return BNT_OK;
 }
 __attribute__((noinline, weak, nonnull(1)))
@@ -4072,9 +4204,9 @@ int __bnt_icmp_set_echo_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 value, int is_seq)
     int ret = __bnt_data_ptr(ctx, off, 8, (void **)&p);
     if (ret)
         return ret;
-    if (is_seq) { old = *(__be16 *)(p + 6); *(__be16 *)(p + 6) = v; }
-    else        { old = *(__be16 *)(p + 4); *(__be16 *)(p + 4) = v; }
-    *(__be16 *)(p + 2) = __bnt_csum16_update(*(__be16 *)(p + 2), old, v);
+    if (is_seq) { old = __BNT_PKT_LOAD(*(__be16 *)(p + 6)); __BNT_PKT_STORE(*(__be16 *)(p + 6), v); }
+    else        { old = __BNT_PKT_LOAD(*(__be16 *)(p + 4)); __BNT_PKT_STORE(*(__be16 *)(p + 4), v); }
+    __BNT_PKT_STORE(*(__be16 *)(p + 2), __bnt_csum16_update(__BNT_PKT_LOAD(*(__be16 *)(p + 2)), old, v));
     return BNT_OK;
 }
 #endif
@@ -4668,15 +4800,15 @@ int __bnt_icmp6_set_advert_flag_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 flag,
     if (p[0] != (is_neighbor ? BNT_ICMP6_ND_NEIGHBOR_ADVERT
                              : BNT_ICMP6_ND_ROUTER_ADVERT))
         return BNT_ERR_BAD_PROTO;
-    old = *(__be16 *)(p + 4);
+    old = __BNT_PKT_LOAD(*(__be16 *)(p + 4));
     h   = bpf_ntohs(old);
     b   = is_neighbor ? (h >> 8) : (h & 0x00ff);
     if (enabled) b |= flag;
     else         b &= (__u16)~flag;
     neww = is_neighbor ? bpf_htons((b << 8) | (h & 0x00ff))
                        : bpf_htons((h & 0xff00) | (b & 0x00ff));
-    *(__be16 *)(p + 4) = neww;
-    *(__be16 *)(p + 2) = __bnt_csum16_update(*(__be16 *)(p + 2), old, neww);
+    __BNT_PKT_STORE(*(__be16 *)(p + 4), neww);
+    __BNT_PKT_STORE(*(__be16 *)(p + 2), __bnt_csum16_update(__BNT_PKT_LOAD(*(__be16 *)(p + 2)), old, neww));
     return BNT_OK;
 }
 #endif
@@ -6329,18 +6461,30 @@ static __always_inline int __bnt_ctx__validate_ipv4(const bnt_ipv4 *ip4)
 
 static __always_inline int __bnt_ctx__validate_ipv6_base(const bnt_ipv6 *ip6)
 {
+#if !BNT_INLINE_ALL
+    const struct ipv6hdr *h;
+#else
     struct ipv6hdr h;
+#endif
     __u8 first;
     int ret;
 
     if (!ip6)
         return BNT_ERR_BAD_ARG;
 
+#if !BNT_INLINE_ALL
+    /* Bound the whole header, read only the version byte (no header copy). */
+    ret = __bnt_data_ptr(ip6->__ctx, ip6->__off, sizeof(*h), (void **)&h);
+    if (ret)
+        return ret;
+    first = *(const __u8 *)h;
+#else
     ret = __bnt_read(ip6->__ctx, ip6->__off, &h, sizeof(h));
     if (ret)
         return ret;
 
     first = *(__u8 *)&h;
+#endif
     if ((first >> 4) != 6)
         return BNT_ERR_BAD_PROTO;
 
@@ -7612,9 +7756,9 @@ int __bnt_tcp_set_port_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 port, int is_dest)
     int ret = __bnt_data_ptr(ctx, off, sizeof(*tcp), (void **)&tcp);
     if (ret)
         return ret;
-    if (is_dest) { old = tcp->dest; tcp->dest = v; }
-    else         { old = tcp->source; tcp->source = v; }
-    tcp->check = __bnt_csum16_update(tcp->check, old, v);
+    if (is_dest) { old = __BNT_PKT_LOAD(tcp->dest); __BNT_PKT_STORE(tcp->dest, v); }
+    else         { old = __BNT_PKT_LOAD(tcp->source); __BNT_PKT_STORE(tcp->source, v); }
+    __BNT_PKT_STORE(tcp->check, __bnt_csum16_update(__BNT_PKT_LOAD(tcp->check), old, v));
     return BNT_OK;
 }
 __attribute__((noinline, weak, nonnull(1)))
@@ -7625,13 +7769,13 @@ int __bnt_udp_set_port_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 port, int is_dest)
     int ret = __bnt_data_ptr(ctx, off, sizeof(*udp), (void **)&udp);
     if (ret)
         return ret;
-    if (is_dest) { old = udp->dest; udp->dest = v; }
-    else         { old = udp->source; udp->source = v; }
-    c = udp->check;
+    if (is_dest) { old = __BNT_PKT_LOAD(udp->dest); __BNT_PKT_STORE(udp->dest, v); }
+    else         { old = __BNT_PKT_LOAD(udp->source); __BNT_PKT_STORE(udp->source, v); }
+    c = __BNT_PKT_LOAD(udp->check);
     if (c != 0) {                       /* UDP checksum 0 = none */
         c = __bnt_csum16_update(c, old, v);
         if (c == 0) c = bpf_htons(0xffff);
-        udp->check = c;
+        __BNT_PKT_STORE(udp->check, c);
     }
     return BNT_OK;
 }
@@ -7704,9 +7848,9 @@ int __bnt_tcp_set_seq_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 value, int is_ack)
     int ret = __bnt_data_ptr(ctx, off, sizeof(*tcp), (void **)&tcp);
     if (ret)
         return ret;
-    if (is_ack) { old = tcp->ack_seq; tcp->ack_seq = v; }
-    else        { old = tcp->seq;     tcp->seq     = v; }
-    tcp->check = __bnt_csum32_update(tcp->check, old, v);
+    if (is_ack) { old = __BNT_PKT_LOAD(tcp->ack_seq); __BNT_PKT_STORE(tcp->ack_seq, v); }
+    else        { old = __BNT_PKT_LOAD(tcp->seq);     __BNT_PKT_STORE(tcp->seq, v); }
+    __BNT_PKT_STORE(tcp->check, __bnt_csum32_update(__BNT_PKT_LOAD(tcp->check), old, v));
     return BNT_OK;
 }
 #endif
@@ -7805,13 +7949,13 @@ int __bnt_tcp_set_flag_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 flag, int enabled)
     int ret = __bnt_data_ptr(ctx, off, sizeof(*tcp), (void **)&tcp);
     if (ret)
         return ret;
-    old = *(__be16 *)((__u8 *)tcp + 12);        /* data offset | reserved | flags */
+    old = __BNT_PKT_LOAD(*(__be16 *)((__u8 *)tcp + 12));        /* data offset | reserved | flags */
     w   = bpf_ntohs(old);
     if (enabled) w |= flag;
     else         w &= (__u16)~flag;
     v = bpf_htons(w);
-    *(__be16 *)((__u8 *)tcp + 12) = v;
-    tcp->check = __bnt_csum16_update(tcp->check, old, v);
+    __BNT_PKT_STORE(*(__be16 *)((__u8 *)tcp + 12), v);
+    __BNT_PKT_STORE(tcp->check, __bnt_csum16_update(__BNT_PKT_LOAD(tcp->check), old, v));
     return BNT_OK;
 }
 #endif
@@ -8202,10 +8346,10 @@ int __bnt_ipv4_set_tos_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 tos)
     int ret = __bnt_data_ptr(ctx, off, sizeof(*ip), (void **)&ip);
     if (ret)
         return ret;
-    old_w = *(__be16 *)ip;                                  /* version|IHL | TOS */
+    old_w = __BNT_PKT_LOAD(*(__be16 *)ip);                                  /* version|IHL | TOS */
     new_w = bpf_htons((bpf_ntohs(old_w) & 0xFF00) | ((__u16)tos & 0x00FF));
     ip->tos   = tos;
-    ip->check = __bnt_csum16_update(ip->check, old_w, new_w);
+    __BNT_PKT_STORE(ip->check, __bnt_csum16_update(__BNT_PKT_LOAD(ip->check), old_w, new_w));
     return BNT_OK;
 }
 #endif
@@ -8251,10 +8395,10 @@ int __bnt_ipv4_set_ttl_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 ttl)
     int ret = __bnt_data_ptr(ctx, off, sizeof(*ip), (void **)&ip);
     if (ret)
         return ret;
-    old_w = *(__be16 *)((__u8 *)ip + offsetof(struct iphdr, ttl)); /* TTL | protocol */
+    old_w = __BNT_PKT_LOAD(*(__be16 *)((__u8 *)ip + offsetof(struct iphdr, ttl))); /* TTL | protocol */
     new_w = bpf_htons((bpf_ntohs(old_w) & 0x00FF) | ((__u16)ttl << 8));
     ip->ttl   = ttl;
-    ip->check = __bnt_csum16_update(ip->check, old_w, new_w);
+    __BNT_PKT_STORE(ip->check, __bnt_csum16_update(__BNT_PKT_LOAD(ip->check), old_w, new_w));
     return BNT_OK;
 }
 #endif
@@ -8313,10 +8457,10 @@ int __bnt_ipv4_dec_ttl_g(BNT_CTX_TYPE *ctx, __u32 off, bool *expired)
             *expired = true;
         return BNT_ERR_BAD_STATE;
     }
-    old_w = *(__be16 *)((__u8 *)ip + offsetof(struct iphdr, ttl)); /* TTL | protocol */
+    old_w = __BNT_PKT_LOAD(*(__be16 *)((__u8 *)ip + offsetof(struct iphdr, ttl))); /* TTL | protocol */
     new_w = bpf_htons((((__u16)(ttl - 1)) << 8) | (bpf_ntohs(old_w) & 0x00FF));
     ip->ttl   = ttl - 1;
-    ip->check = __bnt_csum16_update(ip->check, old_w, new_w);
+    __BNT_PKT_STORE(ip->check, __bnt_csum16_update(__BNT_PKT_LOAD(ip->check), old_w, new_w));
     return BNT_OK;
 }
 #endif
@@ -8378,14 +8522,14 @@ int __bnt_ipv4_set_protocol_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 protocol)
         return ret;
 
     old_proto = ip->protocol;
-    old_w     = *(__be16 *)((__u8 *)ip + offsetof(struct iphdr, ttl)); /* TTL | protocol */
+    old_w     = __BNT_PKT_LOAD(*(__be16 *)((__u8 *)ip + offsetof(struct iphdr, ttl))); /* TTL | protocol */
     new_w     = bpf_htons((bpf_ntohs(old_w) & 0xFF00) | ((__u16)protocol & 0x00FF));
     ip->protocol = protocol;
-    ip->check    = __bnt_csum16_update(ip->check, old_w, new_w);
+    __BNT_PKT_STORE(ip->check, __bnt_csum16_update(__BNT_PKT_LOAD(ip->check), old_w, new_w));
 
     vihl = *(__u8 *)ip;
     hlen = (__u32)(vihl & 0x0f) * 4;
-    frag = bpf_ntohs(ip->frag_off);
+    frag = bpf_ntohs(__BNT_PKT_LOAD(ip->frag_off));
     if (hlen >= sizeof(struct iphdr) && (frag & IP_OFFSET) == 0 &&
         (old_proto == IPPROTO_TCP || old_proto == IPPROTO_UDP)) {
         __u32 csum_off = off + hlen +
@@ -8396,13 +8540,13 @@ int __bnt_ipv4_set_protocol_g(BNT_CTX_TYPE *ctx, __u32 off, __u8 protocol)
         if (ret)
             return ret;
         {
-            __be16 c   = *(__be16 *)p;
+            __be16 c   = __BNT_PKT_LOAD(*(__be16 *)p);
             int    udp = (old_proto == IPPROTO_UDP);
             if (!(udp && c == 0)) {
                 __be16 nc = __bnt_csum16_update(c, bpf_htons((__u16)old_proto),
                                                  bpf_htons((__u16)protocol));
                 if (udp && nc == 0) nc = bpf_htons(0xffff);
-                *(__be16 *)p = nc;
+                __BNT_PKT_STORE(*(__be16 *)p, nc);
             }
         }
     }
@@ -8553,13 +8697,13 @@ int __bnt_ipv4_set_frag_flag_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 flag, int ena
     int ret = __bnt_data_ptr(ctx, off, sizeof(*ip), (void **)&ip);
     if (ret)
         return ret;
-    old = *(__be16 *)((__u8 *)ip + offsetof(struct iphdr, frag_off));
+    old = __BNT_PKT_LOAD(*(__be16 *)((__u8 *)ip + offsetof(struct iphdr, frag_off)));
     w   = bpf_ntohs(old);
     if (enabled) w |= flag;
     else         w &= (__u16)~flag;
     v = bpf_htons(w);
-    *(__be16 *)((__u8 *)ip + offsetof(struct iphdr, frag_off)) = v;
-    ip->check = __bnt_csum16_update(ip->check, old, v);
+    __BNT_PKT_STORE(*(__be16 *)((__u8 *)ip + offsetof(struct iphdr, frag_off)), v);
+    __BNT_PKT_STORE(ip->check, __bnt_csum16_update(__BNT_PKT_LOAD(ip->check), old, v));
     return BNT_OK;
 }
 #endif
@@ -8686,14 +8830,14 @@ int __bnt_ipv4_set_addr_g(BNT_CTX_TYPE *ctx, __u32 off, __be32 addr, int is_dadd
     if (ret)
         return ret;
 
-    if (is_daddr) { old = ip->daddr; ip->daddr = addr; }
-    else          { old = ip->saddr; ip->saddr = addr; }
-    ip->check = __bnt_csum32_update(ip->check, old, addr);
+    if (is_daddr) { old = __BNT_PKT_LOAD(ip->daddr); __BNT_PKT_STORE(ip->daddr, addr); }
+    else          { old = __BNT_PKT_LOAD(ip->saddr); __BNT_PKT_STORE(ip->saddr, addr); }
+    __BNT_PKT_STORE(ip->check, __bnt_csum32_update(__BNT_PKT_LOAD(ip->check), old, addr));
 
     vihl  = *(__u8 *)ip;
     hlen  = (__u32)(vihl & 0x0f) * 4;
     proto = ip->protocol;
-    frag  = bpf_ntohs(ip->frag_off);
+    frag  = bpf_ntohs(__BNT_PKT_LOAD(ip->frag_off));
     if (hlen >= sizeof(struct iphdr) && (frag & IP_OFFSET) == 0 &&
         (proto == IPPROTO_TCP || proto == IPPROTO_UDP)) {
         __u32 csum_off = off + hlen +
@@ -8704,12 +8848,12 @@ int __bnt_ipv4_set_addr_g(BNT_CTX_TYPE *ctx, __u32 off, __be32 addr, int is_dadd
         if (ret)
             return ret;
         {
-            __be16 c   = *(__be16 *)p;
+            __be16 c   = __BNT_PKT_LOAD(*(__be16 *)p);
             int    udp = (proto == IPPROTO_UDP);
             if (!(udp && c == 0)) {                 /* UDP checksum 0 = none */
                 __be16 nc = __bnt_csum32_update(c, old, addr);
                 if (udp && nc == 0) nc = bpf_htons(0xffff);
-                *(__be16 *)p = nc;
+                __BNT_PKT_STORE(*(__be16 *)p, nc);
             }
         }
     }

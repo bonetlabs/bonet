@@ -13,6 +13,22 @@ over plain BPF.
 
 Develop and debug in this mode.
 
+This mode needs @c -mcpu=v3. clang 16–19 default to v1; from clang 18 on, a lower
+level stops the build with an error.
+
+@section build_modes_align Alignment
+
+In the default mode BONet reads and writes multi-byte packet fields with single
+loads and stores at offsets the verifier only knows as a range. Kernels that
+enforce alignment reject them: those built without
+@c CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS (RISC-V, LoongArch and MIPS in their
+default configurations, SPARC64) and any program loaded with
+@c BPF_F_STRICT_ALIGNMENT.
+
+Set @c BNT_STRICT_ALIGN=1 for them: every such access becomes byte-wise. Passing
+@c -D__TARGET_ARCH_riscv, @c _loongarch, @c _mips or @c _sparc sets it
+automatically. The inline and legacy modes and the TC backends do not need it.
+
 @section build_modes_perf Performance mode
 
 Set @c BNT_INLINE_ALL=1 to trade the guarantee for speed. It removes most of the
@@ -23,8 +39,7 @@ lower overhead; be ready to revert if it no longer verifies.
 
 @section build_modes_legacy Legacy kernels
 
-Kernels without BPF global subprograms, roughly those before 5.6, cannot use the
-default mode. Set @c BNT_LEGACY_KERNEL=1 for them: it forces @c BNT_INLINE_ALL
+Kernels older than 5.12 cannot use the default mode. Set @c BNT_LEGACY_KERNEL=1 for them: it forces @c BNT_INLINE_ALL
 and adds the barriers needed to verify there. It must be set explicitly, since
 the build cannot detect the target kernel.
 */

@@ -43,6 +43,8 @@ int xdp_drop_telnet(struct xdp_md *ctx)
 
 - **clang/LLVM 16 or newer** with the `bpf` target (gcc cannot target BPF; clang 15
   and older are not supported). Tested through clang 22.
+- **`-mcpu=v3`** in the default build mode. clang 16–19 default to v1; clang 18 and
+  newer stop the build with an error if the level is lower.
 - **Linux kernel UAPI headers.** `bnt` declares the BPF helpers it uses itself, so
   it does **not** depend on libbpf. (Your program still needs `bpf/bpf_helpers.h`
   for the usual `SEC()` scaffolding.)
@@ -60,7 +62,7 @@ sudo apt install -y clang llvm libbpf-dev linux-headers-$(uname -r)
 Point the compiler at `src/`:
 
 ```bash
-clang -O2 -g -target bpf -I/path/to/bonet/src -c prog.c -o prog.o
+clang -O2 -g -target bpf -mcpu=v3 -I/path/to/bonet/src -c prog.c -o prog.o
 ```
 
 ### Install, then consume via pkg-config (recommended)
@@ -78,7 +80,7 @@ package config. For Makefile / non-CMake projects — the common case for BPF da
 paths — use pkg-config:
 
 ```bash
-clang -O2 -g -target bpf $(pkg-config --cflags bnt) -c prog.c -o prog.o
+clang -O2 -g -target bpf -mcpu=v3 $(pkg-config --cflags bnt) -c prog.c -o prog.o
 ```
 
 ### If you already use CMake

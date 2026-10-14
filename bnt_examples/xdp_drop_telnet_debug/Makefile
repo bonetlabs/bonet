@@ -4,7 +4,7 @@ ARCH ?= x86
 SYSINC ?= /usr/include/$(shell uname -m)-linux-gnu
 
 BPF_CFLAGS := -O2 -g -Wall -Wextra -Werror=incompatible-pointer-types \
-	-target bpf -D__TARGET_ARCH_$(ARCH) -I../../src -I$(SYSINC)
+	-target bpf -mcpu=v3 -D__TARGET_ARCH_$(ARCH) -I../../src -I$(SYSINC)
 USER_CFLAGS := -O2 -g -Wall -Wextra -I../../src -I$(SYSINC)
 USER_LDLIBS := -lbpf -lelf -lz
 
