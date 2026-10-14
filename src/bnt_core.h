@@ -709,7 +709,12 @@ static __always_inline int __bnt_ipv6_meta(const bnt_ipv6 *ip6, struct __bnt_ipv
 #endif
         __u32 ext_len;
 
+#if !BNT_INLINE_ALL
+        /* The fast path above already tested the first next header. */
+        if (i && !__bnt_is_ipv6_ext(nexthdr))
+#else
         if (!__bnt_is_ipv6_ext(nexthdr))
+#endif
             break;
 
 #if !BNT_INLINE_ALL
@@ -1327,7 +1332,8 @@ static __always_inline int __bnt_ipv6_fill_meta(BNT_CTX_TYPE *ctx, __u32 off,
         __u8 ext1;
         __u32 ext_len;
 
-        if (!__bnt_is_ipv6_ext(nexthdr))
+        /* The fast path above already tested the first next header. */
+        if (i && !__bnt_is_ipv6_ext(nexthdr))
             break;
 
         ret = __bnt_read_u8_g(ctx, cur, &ext0);
