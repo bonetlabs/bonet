@@ -1,10 +1,11 @@
 """BPF interpreter for the BONet XDP globals.
 
 Runs one function of a BPF ELF object, as compiled, and records:
-  exec          executed BPF instructions (an LD_IMM64 counts once)
+  exec          executed BPF instructions (an LD_IMM64 counts once; a `ja +0`
+                does not, since the verifier removes it)
   by_class      executed instructions per class: alu32, alu64, endian, ldimm64,
                 loads and stores per region (pkt, ctx, stack, mem), jcond, ja,
-                call_global, call_helper:<id>, exit, mul, div
+                nop (`ja +0`), call_global, call_helper:<id>, exit, mul, div
   helper_bytes  bytes processed by bpf_csum_diff
   stack_max     deepest stack use of the active call chain, in bytes
 
@@ -199,6 +200,8 @@ class Run:
                         for k in (1, 2, 3, 4, 5): r[k] = 0xdeadbeef
                     pc += 1; continue
                 if op == 0x00:
+                    if off == 0 and not is32:  # nop; the verifier removes it
+                        self.exec -= 1; self.c['nop'] += 1; pc += 1; continue
                     self.c['ja'] += 1; pc += off + 1; continue
                 a = r[dst]; b = r[src] if code & 0x08 else imm & M64
                 if is32: a &= M32; b &= M32
