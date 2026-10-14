@@ -11,6 +11,8 @@ eBPF programs against equivalent programs written with the `bnt` framework.
   (everything inlined, no global subprograms; meaningful on XDP only). It has no
   sources of its own; its Makefile compiles `framework/`'s sources with the
   inline flag.
+- `exec_metrics/`: a BPF interpreter that counts the instructions each XDP
+  global executes, to compare builds of the globals.
 - `macro_perf/`: two-machine forwarding throughput benchmarks.
 - `softeng_perf/`: software-engineering metrics, verifier-log metrics, and
   cognitive-complexity reports.
@@ -136,5 +138,6 @@ make -C framework_inlined clean
 
 Generated reports are ignored by git:
 
+- `exec_metrics/results/`
 - `macro_perf/results/`
 - `softeng_perf/results/`
