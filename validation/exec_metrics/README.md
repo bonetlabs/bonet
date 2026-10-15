@@ -194,6 +194,10 @@ default, or for strict-alignment and big-endian builds.
 `candidates.py` builds the C globals (`BNT_ASM_GLOBALS=0`), so regenerating
 the candidates does not depend on the shipped asm.
 
+`check_asm.py` checks the default build against the choices: each global's
+code must be the chosen configuration's (apart from the dropped `ja +0`), and
+its BTF must have global linkage and named parameters.
+
 ## Limits
 
 - `bpf_fib_lookup` is a stub that returns `BPF_FIB_LKUP_RET_FWD_DISABLED`, as
