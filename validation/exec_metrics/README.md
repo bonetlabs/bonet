@@ -2,8 +2,9 @@
 
 The verifier says whether a global loads and how many instructions it has, but
 not how many it executes on a given packet. `bpfsim.py` is a small BPF
-interpreter that runs a global straight from the compiled object and counts
-what it executes, so different builds of the same global can be compared.
+interpreter that runs a global, either from the compiled object or as the
+verifier translated it, and counts what it executes, so different builds of
+the same global can be compared.
 
 It uses the cases in `tests/units/cases.py`. Each case is a global, a packet and
 the call arguments.
@@ -11,11 +12,16 @@ the call arguments.
 For each run it records:
 
 - executed instructions, total and by class (ALU, packet/stack/ctx loads and
-  stores, jumps, calls to globals and helpers);
+  stores, jumps, calls to globals and helpers), for the global alone and with
+  the globals it calls;
 - bytes passed to `bpf_csum_diff`;
-- the deepest stack use along the path taken.
+- the deepest stack use along the path taken;
+- the executed instructions themselves, which `mca.py` turns into estimated
+  cycles.
 
-Everything else comes from the kernel (see `verifier_stats` below).
+Everything else comes from the kernel: whether each global loads, the
+verifier's numbers and the code sizes (`verifier_stats`), and the results of
+each case (`kernel_cases.py`).
 
 ## Checking the interpreter
 
@@ -45,18 +51,21 @@ summary. A changed result means one of the two builds is wrong.
 
 ## Building the configurations
 
-`candidates.sh` builds the globals with each compiler and level, and with the
+`candidates.py` builds the globals with each compiler and level, and with the
 optimizers on top:
 
 ```bash
 CLANGS="clang16:/opt/llvm16/bin/clang clang20:clang-20" \
 GCC_BPF=bpf-gcc GCC_LABEL=gcc16 \
 MERLIN=~/src/Merlin \
-./candidates.sh results/objs
+./candidates.py results/objs
 ```
 
-Leave out `GCC_BPF` or `MERLIN` to skip them. It writes one object per
-configuration and `results/objs/configs.txt`.
+Leave out `GCC_BPF` or `MERLIN` to skip them. For each configuration it writes
+`<label>.o`, with every global, and `cases/<label>/`, the programs of
+`tests/units` built the same way. It checks that each global is the same code
+in both and lists the exceptions in `mismatch.txt`. `configs.txt` has one
+`LABEL=OBJ` per line.
 
 gcc builds come in three sets of flags: none, `-fno-ivopts`, and
 `-fno-ivopts -fno-cse-follow-jumps -fno-thread-jumps`. Only the last one gets
@@ -82,13 +91,22 @@ AtomicBPF finds nothing to merge in the globals.
 
 ## Kernel metrics
 
+Both tools need root.
+
 `verifier_stats` loads each program of an object on its own and prints what
-the kernel reports about the global it calls. It needs root:
+the kernel reports about the global it calls:
 
 ```bash
 make
-sudo build/verifier_stats results/objs/*.o > results/verifier.tsv
+sudo build/verifier_stats -x results/xlated results/objs/*.o > results/verifier.tsv
+grep -wE '__bpf_call_base|bpf_csum_diff|bpf_xdp_adjust_head|bpf_xdp_fib_lookup' \
+    /proc/kallsyms | sudo tee results/xlated/kallsyms.txt
 ```
+
+With `-x` it also saves each program as the verifier translated it. The
+translated code calls helpers by kernel address, so the interpreter needs the
+addresses of the same boot: take `kallsyms.txt` right after, without
+rebooting.
 
 The columns are: whether it loaded and the verifier error; the verifier's
 processed instructions, states and time; the stack depth of the global; its
@@ -96,26 +114,75 @@ size after the verifier's rewrites (instructions) and after the JIT (bytes).
 The verifier counts cover the whole test program, which is the global, the
 globals it calls and a small caller.
 
+`kernel_cases.py` runs every case program of every configuration with
+`BPF_PROG_TEST_RUN`, through `tests/units/build/run_case`
+(`make -C ../../tests/units`):
+
+```bash
+sudo ./kernel_cases.py results/objs > results/kernel_cases.tsv
+```
+
 ## Collecting a CSV
 
 ```bash
-python3 collect.py -o results/all.csv --ref results/objs/clang20-O2.o \
-    --verifier results/verifier.tsv $(cat results/objs/configs.txt)
+python3 collect.py -o results/all.csv --verifier results/verifier.tsv \
+    --kernel-cases results/kernel_cases.tsv --xlated results/xlated \
+    --mca skylake,znver3 $(cat results/objs/configs.txt)
 ```
 
-Each row is one configuration and one case: the static size of the global, the
-executed instructions, `sim_stack_max`, csum bytes, return value, one
-`n_<class>` column per instruction class, and `same_as_ref` (whether the
-result matches the `--ref` object). With `--verifier`, the kernel columns are
-added with a `k_` prefix. The label before `=` is free text. `results/` and
-`build/` are ignored by git.
+Each row is one configuration and one case. The label before `=` is free
+text. The columns:
+
+- interpreter, compiled code: `static_insns`, `exec_insns` (the global's own
+  instructions), `exec_total` (with the globals it calls), `calls` (which
+  globals, how many times), `sim_stack_max`, `helper_bytes`, `ret`, and one
+  `n_<class>` column per instruction class, for the global alone;
+- interpreter, translated code: `xl_exec_insns`, `xl_exec_total`, `xl_ld`,
+  `xl_st`, `xl_mul`, `xl_same_as_kernel`;
+- llvm-mca: `mca_<cpu>` and `xl_mca_<cpu>`;
+- kernel: `loaded`, `k_error`, the verifier's numbers, `k_stack`,
+  `k_xlated_insns`, `k_jited_bytes`, and how the case ran (`k_status`,
+  `k_ret`, `k_same_as_expected` against `tests/units/expected.json`);
+- `sim_same_as_kernel`: whether the interpreter agrees with the kernel on that
+  configuration; `--ref OBJ` adds `same_as_ref`, the interpreter against a
+  reference object.
+
+A global is measured on its own code: the globals it calls are chosen on
+their own, so they do not count for it. `results/` and `build/` are ignored by
+git.
+
+`data/` holds the CSV behind the choice of the shipped globals, with a note of
+what it was built from.
+
+## Estimated cycles
+
+`mca.py` lowers the instructions a global executed to x86-64 the way the
+kernel's x86 JIT does (same register mapping, `movzx` loads, `ror`+`movzx` for
+16-bit byte swaps, `shlx`/`shrx`/`sarx` for shifts by a register, `cmp` or
+`test` plus a jump for branches) and asks `llvm-mca` (LLVM 20) for the cycles
+of one pass on a CPU model: ports, latencies, dispatch width and register
+dependencies come from LLVM's scheduling model for that CPU. `collect.py
+--mca skylake,znver3` adds `mca_<cpu>` (compiled code) and `xl_mca_<cpu>`
+(translated code) columns.
+
+It is an estimate, not a measurement. It leaves out the prologue and epilogue,
+the time spent in helpers and in the globals called (the same in every build),
+branch mispredictions and cache misses. llvm-mca also takes loads and stores
+as not aliasing, so a spill read back at once costs its store and load but no
+forwarding delay. Small changes move the estimate by a few cycles either way:
+on the FIB globals the two extra loads of the translated code lower the
+Skylake estimate from 133 to 123. Differences of a few cycles between builds
+say nothing.
 
 ## Limits
 
 - `bpf_fib_lookup` is a stub that returns `BPF_FIB_LKUP_RET_FWD_DISABLED`, as
   in the test VM, so only the paths up to the lookup are measured.
 - `bpf_csum_diff` folds the result to 16 bits, as kernel 7.0 does.
-- `ingress_ifindex` reads as 1; `data_meta` equals `data`.
+- `ingress_ifindex` reads as 1; `data_meta` equals `data`. On the translated
+  code the context is `struct xdp_buff` (kernel 7.0 layout), and the reads of
+  `ingress_ifindex` go through the receive queue and the device, as in the
+  kernel.
 - Helper calls count as one instruction. Their cost is in the per-class
   counts and `helper_bytes`, so it can be weighted afterwards.
 - `ja +0` is counted as `nop`, not as an executed instruction: the verifier

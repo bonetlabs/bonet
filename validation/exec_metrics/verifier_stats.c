@@ -1,7 +1,11 @@
 // Load every program of a BPF object on its own and print what the kernel
 // reports about the global it calls, one tab-separated line per program.
 //
-// usage: verifier_stats OBJ...
+// usage: verifier_stats [-x DIR] OBJ...
+//   -x DIR  also write, for each program that loads, the instructions as the
+//           verifier translated them (DIR/<object>/<program>.xlated) and the
+//           first instruction of each function in them (<program>.funcs, one
+//           "name start" per line), for bpfsim.Xlated
 //
 // Columns: object, program, ok, error, and then, when the program loaded:
 //   processed, max_states_per_insn, total_states, peak_states  verifier stats
@@ -23,11 +27,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 
 #define MAX_PROGS 512
 #define MAX_FUNCS 64
 
 static char logbuf[1 << 23];
+static const char *xdir;
+static struct bpf_insn xinsns[1 << 16];
 
 static int quiet(enum libbpf_print_level l, const char *f, va_list a)
 {
@@ -149,6 +156,35 @@ static void one(const char *path, const char *name)
             if (t && !strcmp(btf__name_by_offset(btf, t->name_off), name + 1))
                 g = i;
         }
+        if (xdir) {
+            const char *base = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
+            char p[4096];
+            FILE *f;
+            __u32 n = xlated < sizeof(xinsns) / sizeof(xinsns[0]) ? xlated : 0;
+
+            memset(&info, 0, sizeof(info));
+            info.xlated_prog_len = n * sizeof(struct bpf_insn);
+            info.xlated_prog_insns = (__u64)(unsigned long)xinsns;
+            len = sizeof(info);
+            bpf_prog_get_info_by_fd(bpf_program__fd(target), &info, &len);
+            snprintf(p, sizeof(p), "%s/%s", xdir, base);
+            mkdir(xdir, 0755);
+            mkdir(p, 0755);
+            snprintf(p, sizeof(p), "%s/%s/%s.xlated", xdir, base, name);
+            if ((f = fopen(p, "wb"))) {
+                fwrite(xinsns, sizeof(struct bpf_insn), n, f);
+                fclose(f);
+            }
+            snprintf(p, sizeof(p), "%s/%s/%s.funcs", xdir, base, name);
+            if ((f = fopen(p, "w"))) {
+                for (__u32 i = 0; i < nfunc && btf; i++) {
+                    const struct btf_type *t = btf__type_by_id(btf, finfo[i].type_id);
+
+                    fprintf(f, "%s %u\n", t ? btf__name_by_offset(btf, t->name_off) : "?", finfo[i].insn_off);
+                }
+                fclose(f);
+            }
+        }
         if (g < 0) {
             printf("%s\t%s\t1\tglobal not found\n", path, name);
         } else {
@@ -172,6 +208,10 @@ int main(int argc, char **argv)
     printf("object\tprogram\tok\terror\tprocessed\tmax_states_per_insn\ttotal_states\tpeak_states\t"
            "verif_usec\tsubprogs\tstack\txlated_insns\tjited_bytes\n");
     for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "-x") && i + 1 < argc) {
+            xdir = argv[++i];
+            continue;
+        }
         struct bpf_object *obj = bpf_object__open_file(argv[i], NULL);
         struct bpf_program *prog;
         char names[MAX_PROGS][128];

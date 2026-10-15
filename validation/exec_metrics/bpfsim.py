@@ -1,13 +1,20 @@
 """BPF interpreter for the BONet XDP globals.
 
-Runs one function of a BPF ELF object, as compiled, and records:
-  exec          executed BPF instructions (an LD_IMM64 counts once; a `ja +0`
-                does not, since the verifier removes it)
+Runs one function of a BPF ELF object, as compiled, or of a program as the
+verifier translated it (Xlated), and records:
+  exec          executed BPF instructions, the called globals included (an
+                LD_IMM64 counts once; a `ja +0` does not, since the verifier
+                removes it)
+  own_exec      the same, for the function called only, without the globals it
+                calls
   by_class      executed instructions per class: alu32, alu64, endian, ldimm64,
                 loads and stores per region (pkt, ctx, stack, mem), jcond, ja,
-                nop (`ja +0`), call_global, call_helper:<id>, exit, mul, div
+                nop (`ja +0`), call_global, call_helper:<id>, exit, mul, div;
+                own_class is the same for the function called only
+  calls         globals called by the function, by name, with how many times
   helper_bytes  bytes processed by bpf_csum_diff
   stack_max     deepest stack use of the active call chain, in bytes
+  insns         the function's own executed instructions, raw, for mca.py
 
 It implements what the globals use: ALU/JMP/JMP32, memory loads and stores,
 calls between globals (r6-r9 and r10 preserved), and three helpers:
@@ -46,6 +53,7 @@ class Elf:
         self.text = d[t[4]:t[4] + t[5]]
         self.funcs = {nm: (val // 8, size // 8) for nm, info, shndx, val, size in self.syms
                       if (info & 0xf) == 2 and shndx == self.text_idx}
+        self.func_at = {s: nm for nm, (s, n) in self.funcs.items()}
         self.calls = {}  # insn index in .text -> target insn index
         rel = self.secs.get('.rel.text')
         if rel:
@@ -58,6 +66,31 @@ class Elf:
                     self.calls[idx] = val // 8
                 else:  # section symbol: target relative to the section
                     self.calls[idx] = val // 8 + imm + 1
+
+
+class Xlated:
+    """A program as the verifier translated it: the raw instructions from
+    bpf_prog_info, the start of each function, and the helper ids its calls
+    refer to (the kernel replaces them with addresses; helpers maps each call
+    immediate back to its id). Its context is struct xdp_buff, not xdp_md."""
+    kernel_ctx = True
+
+    def __init__(self, insns, funcs, helpers):
+        t = bytearray(insns)
+        self.calls = {}
+        for i in range(0, len(t), 8):
+            code, regs = t[i], t[i + 1]
+            if code == 0x85 and regs >> 4 == 0:  # helper call
+                imm = struct.unpack_from('<i', t, i + 4)[0]
+                struct.pack_into('<i', t, i + 4, helpers[imm])
+            elif code == 0x85 and regs >> 4 == 1:  # call between functions: off is the jump, imm the function's index
+                self.calls[i // 8] = i // 8 + struct.unpack_from('<h', t, i + 2)[0] + 1
+        self.text = bytes(t)
+        n = len(t) // 8
+        starts = sorted(funcs.values())
+        self.funcs = {nm: (s, (starts[starts.index(s) + 1] if starts.index(s) + 1 < len(starts) else n) - s)
+                      for nm, s in funcs.items()}
+        self.func_at = {s: nm for nm, s in funcs.items()}
 
 
 class Mem:
@@ -79,6 +112,7 @@ class Mem:
 
 
 PKT, CTX, STACK, OUT = 0x10000000, 0x20000000, 0x30000000, 0x40000000
+RXQ, DEV = 0x50000000, 0x60000000  # xdp_rxq_info and net_device, for Xlated
 HEADROOM = 256
 FRAME = 512
 
@@ -93,10 +127,15 @@ class Run:
         self.out = bytearray(out_size); self.mem.add(OUT, self.out, 'mem')
         self.stack = bytearray(FRAME * 16); self.mem.add(STACK, self.stack, 'stack')
         self.c = collections.Counter(); self.exec = 0; self.helper_bytes = 0
+        self.own = collections.Counter(); self.own_exec = 0; self.calls = collections.Counter()
+        self.insns = []  # the same, raw (code, dst, src, off, imm, imm2), for mca.py
+        self.kernel_ctx = getattr(elf, 'kernel_ctx', False)
         self.depth_used = [0]; self.stack_max = 0
         self.trace = None
 
     def ctx_load(self, off, size):
+        if self.kernel_ctx:  # struct xdp_buff, as the verifier rewrote the loads
+            return {0: self.data, 8: self.data_end, 16: self.data, 24: PKT, 32: RXQ}.get(off, 0)
         # The verifier rewrites xdp_md loads into full 64-bit pointers.
         if off == 0: return self.data
         if off == 4: return self.data_end
@@ -121,16 +160,29 @@ class Run:
 
     def exec_from(self, pc, r, frame):
         t = self.elf.text
+        c = collections.Counter()  # this call's own instructions, by class
+        try:
+            return self._exec(pc, r, frame, t, c)
+        finally:
+            self.c.update(c)
+            if frame == 0:
+                self.own.update(c)
+                # mul and div are also counted as alu; nop is not an instruction
+                self.own_exec = sum(c.values()) - c['nop'] - c['mul'] - c['div']
+
+    def _exec(self, pc, r, frame, t, c):
         while True:
             if self.exec > self.max_steps: raise RuntimeError('step limit')
             code, regs, off, imm = struct.unpack_from('<BBhi', t, pc * 8)
             dst, src = regs & 0xf, regs >> 4
             cls = code & 7; self.exec += 1
+            if frame == 0:
+                self.insns.append((code, dst, src, off, imm, struct.unpack_from('<i', t, pc * 8 + 12)[0] if code == 0x18 else 0))
             if self.trace is not None: self.trace.append((pc, list(r)))
             if cls in (4, 7):  # ALU / ALU64
                 op = code & 0xf0; is64 = cls == 7
                 if op == 0xd0:  # endian
-                    self.c['endian'] += 1
+                    c['endian'] += 1
                     v = r[dst]
                     if code & 0x08:  # to big endian
                         v = int.from_bytes((v & ((1 << imm) - 1)).to_bytes(imm // 8, 'little'), 'big')
@@ -144,49 +196,55 @@ class Run:
                 sa = s64(a) if is64 else s32(a)
                 if op == 0x00: v = a + b
                 elif op == 0x10: v = a - b
-                elif op == 0x20: v = a * b; self.c['mul'] += 1
-                elif op == 0x30: v = a // b if b else 0; self.c['div'] += 1
+                elif op == 0x20: v = a * b; c['mul'] += 1
+                elif op == 0x30: v = a // b if b else 0; c['div'] += 1
                 elif op == 0x40: v = a | b
                 elif op == 0x50: v = a & b
                 elif op == 0x60: v = a << (b & (bits - 1))
                 elif op == 0x70: v = a >> (b & (bits - 1))
                 elif op == 0x80: v = -a
-                elif op == 0x90: v = a % b if b else a; self.c['div'] += 1
+                elif op == 0x90: v = a % b if b else a; c['div'] += 1
                 elif op == 0xa0: v = a ^ b
                 elif op == 0xb0: v = b
                 elif op == 0xc0: v = sa >> (b & (bits - 1))
                 else: raise RuntimeError(f'alu op {code:#x}')
                 r[dst] = v & m
-                self.c['alu64' if is64 else 'alu32'] += 1; pc += 1; continue
+                c['alu64' if is64 else 'alu32'] += 1; pc += 1; continue
             if cls == 0:  # LD_IMM64
                 lo = imm & M32; hi = struct.unpack_from('<i', t, pc * 8 + 12)[0] & M32
-                r[dst] = lo | (hi << 32); self.c['ldimm64'] += 1; pc += 2; continue
+                r[dst] = lo | (hi << 32); c['ldimm64'] += 1; pc += 2; continue
             if cls in (1, 2, 3):
                 size = {0x00: 4, 0x08: 2, 0x10: 1, 0x18: 8}[code & 0x18]
                 if (code & 0xe0) != 0x60: raise RuntimeError(f'mode {code:#x}')
                 if cls == 1:
                     addr = (r[src] + off) & M64
-                    if CTX <= addr < CTX + 24:
+                    if CTX <= addr < CTX + (64 if self.kernel_ctx else 24):
                         r[dst] = self.ctx_load(addr - CTX, size); kind = 'ctx'
+                    elif self.kernel_ctx and RXQ <= addr < RXQ + 64:
+                        r[dst] = DEV if addr == RXQ else 0; kind = 'ctx'
+                    elif self.kernel_ctx and DEV <= addr < DEV + 4096:
+                        r[dst] = 1; kind = 'ctx'  # only ifindex is read
                     else:
                         r[dst], kind = self.mem.load(addr, size)
                     self.note_stack(frame, addr, size)
-                    self.c['ld_' + kind] += 1
+                    c['ld_' + kind] += 1
                 else:
                     addr = (r[dst] + off) & M64
                     v = r[src] if cls == 3 else imm & M64
                     kind = self.mem.store(addr, size, v)
                     self.note_stack(frame, addr, size)
-                    self.c['st_' + kind] += 1
+                    c['st_' + kind] += 1
                 pc += 1; continue
             if cls in (5, 6):
                 op = code & 0xf0; is32 = cls == 6
                 if op == 0x90:  # exit
-                    self.c['exit'] += 1; return r[0]
+                    c['exit'] += 1; return r[0]
                 if op == 0x80:  # call
                     if src == 1:
-                        self.c['call_global'] += 1
+                        c['call_global'] += 1
                         tgt = self.elf.calls.get(pc, pc + imm + 1)
+                        if frame == 0:
+                            self.calls[self.elf.func_at.get(tgt, f'pc{tgt}')] += 1
                         saved = r[6:11]
                         if len(self.depth_used) <= frame + 1: self.depth_used.append(0)
                         self.depth_used[frame + 1] = 0
@@ -195,21 +253,21 @@ class Run:
                         r = r[:6] + saved; r[0] = r0
                         for k in (1, 2, 3, 4, 5): r[k] = 0xdeadbeef  # clobbered
                     else:
-                        self.c[f'call_helper:{imm}'] += 1
+                        c[f'call_helper:{imm}'] += 1
                         r[0] = self.helper(imm, r) & M64
                         for k in (1, 2, 3, 4, 5): r[k] = 0xdeadbeef
                     pc += 1; continue
                 if op == 0x00:
                     if off == 0 and not is32:  # nop; the verifier removes it
-                        self.exec -= 1; self.c['nop'] += 1; pc += 1; continue
-                    self.c['ja'] += 1; pc += off + 1; continue
+                        self.exec -= 1; c['nop'] += 1; pc += 1; continue
+                    c['ja'] += 1; pc += off + 1; continue
                 a = r[dst]; b = r[src] if code & 0x08 else imm & M64
                 if is32: a &= M32; b &= M32
                 sa, sb = (s32(a), s32(b)) if is32 else (s64(a), s64(b))
                 take = {0x10: a == b, 0x20: a > b, 0x30: a >= b, 0x40: bool(a & b), 0x50: a != b,
                         0x60: sa > sb, 0x70: sa >= sb, 0xa0: a < b, 0xb0: a <= b,
                         0xc0: sa < sb, 0xd0: sa <= sb}[op]
-                self.c['jcond'] += 1
+                c['jcond'] += 1
                 pc += off + 1 if take else 1; continue
             raise RuntimeError(f'opcode {code:#x}')
 
