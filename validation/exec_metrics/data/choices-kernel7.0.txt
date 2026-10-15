@@ -1,0 +1,68 @@
+arp_meta: clang22-O2+merlin_bc
+csum_blk: gcc16-base-Os
+csum_byte: gcc16-base-O2
+csum_word: gcc16-base-Os
+ctx_find_icmp4: clang20-Os+merlin_llvm+merlin_bc
+ctx_find_icmp6: clang20-O2+merlin_llvm+merlin_bc
+ctx_find_ipv4: clang20-Os+merlin_llvm+merlin_bc
+ctx_find_ipv6: clang20-O2+merlin_llvm+merlin_bc
+ctx_find_tcp: clang20-Os+merlin_llvm+merlin_bc
+ctx_find_udp: clang20-O2+merlin_llvm+merlin_bc
+eth_insert_ipv4: clang22-O2+merlin_bc
+eth_insert_ipv6: clang20-O2+merlin_llvm+merlin_bc
+eth_insert_mpls: clang22-O2+merlin_bc
+eth_insert_vlan: clang18-O2
+eth_meta: clang20-O2+merlin_bc
+eth_next_off: clang20-O2+merlin_bc
+eth_remove_ipv4: clang22-O2
+eth_remove_ipv6: clang22-O2
+eth_remove_vlan: clang22-O2
+icmp4_recompute_csum: clang16-Os+merlin_bc
+icmp6_recompute_csum: clang20-Os+merlin_llvm+merlin_bc
+icmp6_set_advert_flag: gcc16-base-O1
+icmp_set_echo: clang20-O2 (unico)
+icmp_set_typecode: clang20-O2 (unico)
+ipv4_dec_ttl: clang20-O2+merlin_bc
+ipv4_fib_lookup: clang20-O2+merlin_bc
+ipv4_meta: clang20-O2+merlin_llvm+merlin_bc
+ipv4_next_off: clang22-O2+merlin_bc
+ipv4_next_proto_off: gcc16-base-Os
+ipv4_recompute_csum: clang16-O2+merlin_bc
+ipv4_set_addr: gcc16-base-Os
+ipv4_set_frag_flag: clang20-O2 (unico)
+ipv4_set_protocol: clang20-O2
+ipv4_set_tos: clang20-O2 (unico)
+ipv4_set_ttl: clang20-O2 (unico)
+ipv6_dec_hop_limit: clang20-O2+merlin_bc
+ipv6_fib_lookup: clang20-O2+merlin_llvm+merlin_bc
+ipv6_insert_srh: clang20-Os+merlin_llvm+merlin_bc
+ipv6_meta: clang16-O3+merlin_bc
+ipv6_next_off: clang20-O3+merlin_bc
+ipv6_set_addr: clang18-O3
+ipv6_set_frag_flag: clang16-O3+merlin_bc
+ipv6_set_frag_off_flags: clang16-O3+merlin_bc
+l3_csum16: clang20-O2
+l3_csum32: clang20-O2 (unico)
+l4_csum16: clang20-O2 (unico)
+l4_csum32: clang20-O2
+l4_pseudo_csum16: clang20-O2 (unico)
+l4_pseudo_csum32: clang20-O2
+read_be16: gcc16-base-O2
+read_be32: gcc16-base-O2
+read_in6: clang20-O2+merlin_bc
+read_mac: clang20-O2+merlin_bc
+read_u8: gcc16-base-O2
+tcp_next_off: clang20-O2+merlin_bc
+tcp_recompute_csum_v4: clang20-O2+merlin_llvm+merlin_bc
+tcp_recompute_csum_v6: clang20-O2+merlin_llvm+merlin_bc
+tcp_set_flag: clang20-O2 (unico)
+tcp_set_port: clang20-O2
+tcp_set_seq: clang20-O2
+udp_recompute_csum_v4: clang20-O2+merlin_llvm+merlin_bc
+udp_recompute_csum_v6: clang20-O2+merlin_llvm+merlin_bc
+udp_set_port: clang20-O2 (unico)
+write_be16: gcc16-safe-O2
+write_be32: clang20-O2
+write_in6: gcc16-base-O2
+write_mac: gcc16-base-O2
+write_u8: clang20-O2

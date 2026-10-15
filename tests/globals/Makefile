@@ -13,7 +13,7 @@ HOST_CFLAGS := -O2 -g -Wall -Wextra -I$(SYSINC)
 HOST_LDLIBS := -lbpf -lelf -lz
 
 BNT_HEADERS := $(wildcard $(ROOT)/src/*.h)
-OBJECTS     := $(BUILD)/globals.o $(BUILD)/globals_strict.o
+OBJECTS     := $(BUILD)/globals.o $(BUILD)/globals_c.o $(BUILD)/globals_strict.o
 
 .PHONY: all check clean
 
@@ -28,6 +28,11 @@ $(BUILD)/globals.c: gen_programs.py $(BNT_HEADERS) | $(BUILD)
 $(BUILD)/globals.o: $(BUILD)/globals.c
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 
+# The C definitions of the globals, which the default build replaces with
+# bnt_asm_globals.h.
+$(BUILD)/globals_c.o: $(BUILD)/globals.c
+	$(CLANG) $(BPF_CFLAGS) -DBNT_ASM_GLOBALS=0 -c $< -o $@
+
 $(BUILD)/globals_strict.o: $(BUILD)/globals.c
 	$(CLANG) $(BPF_CFLAGS) -DBNT_STRICT_ALIGN=1 -c $< -o $@
 
@@ -36,7 +41,7 @@ $(BUILD)/load_each: load_each.c | $(BUILD)
 
 # Needs root (or CAP_BPF + CAP_NET_ADMIN).
 check: all
-	./$(BUILD)/load_each $(BUILD)/globals.o
+	./$(BUILD)/load_each $(BUILD)/globals.o $(BUILD)/globals_c.o
 	./$(BUILD)/load_each --strict $(BUILD)/globals_strict.o
 
 clean:

@@ -16,17 +16,25 @@ BNT_HEADERS := $(wildcard $(ROOT)/src/*.h)
 
 .PHONY: all check update-expected clean
 
-all: $(BUILD)/default.stamp $(BUILD)/strict.stamp $(BUILD)/run_case
+all: $(BUILD)/default.stamp $(BUILD)/c.stamp $(BUILD)/strict.stamp $(BUILD)/run_case
 
 $(BUILD)/gen.stamp: gen_cases.py cases.py
 	$(PYTHON) gen_cases.py $(BUILD)/gen
 	touch $@
 
-# One object per case, in the default build and with BNT_STRICT_ALIGN=1.
+# One object per case: in the default build (the asm globals), with the C
+# globals (BNT_ASM_GLOBALS=0), and with BNT_STRICT_ALIGN=1.
 $(BUILD)/default.stamp: $(BUILD)/gen.stamp $(BNT_HEADERS)
 	mkdir -p $(BUILD)/default
 	for f in $(BUILD)/gen/case_*.c; do \
 		$(CLANG) $(BPF_CFLAGS) -c $$f -o $(BUILD)/default/$$(basename $$f .c).o || exit 1; \
+	done
+	touch $@
+
+$(BUILD)/c.stamp: $(BUILD)/gen.stamp $(BNT_HEADERS)
+	mkdir -p $(BUILD)/c
+	for f in $(BUILD)/gen/case_*.c; do \
+		$(CLANG) $(BPF_CFLAGS) -DBNT_ASM_GLOBALS=0 -c $$f -o $(BUILD)/c/$$(basename $$f .c).o || exit 1; \
 	done
 	touch $@
 
@@ -41,9 +49,9 @@ $(BUILD)/run_case: run_case.c
 	mkdir -p $(BUILD)
 	$(HOST_CC) $(HOST_CFLAGS) $< -o $@ $(HOST_LDLIBS)
 
-# Needs root (or CAP_BPF + CAP_NET_ADMIN). Both builds must match expected.json.
+# Needs root (or CAP_BPF + CAP_NET_ADMIN). Every build must match expected.json.
 check: all
-	$(PYTHON) check.py $(BUILD)/default $(BUILD)/strict
+	$(PYTHON) check.py $(BUILD)/default $(BUILD)/c $(BUILD)/strict
 
 # Records expected.json from the default build. Run only after checking that
 # a behaviour change is intended.

@@ -16,6 +16,24 @@ Develop and debug in this mode.
 This mode needs @c -mcpu=v3. clang 16–19 default to v1; from clang 18 on, a lower
 level stops the build with an error.
 
+@subsection build_modes_asm Prebuilt globals
+
+In this mode the globals come as BPF assembly (@c bnt_asm_globals.h), so the
+code the verifier checks does not depend on the compiler that builds your
+program. For each global it is the code of the compiler and optimizer chosen
+among several we compared, verified and tested on the kernel
+(@c validation/exec_metrics).
+
+It is on with clang, on little-endian targets, without @c BNT_STRICT_ALIGN;
+otherwise the C definitions are compiled instead. The assembly assumes the
+default values of the limits that shape the globals (@c BNT_MAX_VLAN_DEPTH,
+@c BNT_MAX_IPV6_EXT_DEPTH, @c BNT_SRV6_MAX_SEGS, @c BNT_XDP_MAX_HEADER_PREFIX,
+@c BNT_XDP_MAX_PACKET_OFFSET, @c BNT_CSUM_CHUNK, @c BNT_MAX_PAYLOAD, and the
+ICMPv6 type constants @c BNT_ICMP6_ND_NEIGHBOR_ADVERT and
+@c BNT_ICMP6_ND_ROUTER_ADVERT): changing one stops the build. Set
+@c BNT_ASM_GLOBALS=0 to compile the C definitions instead, for example to
+change those limits.
+
 @section build_modes_align Alignment
 
 In the default mode BONet reads and writes multi-byte packet fields with single

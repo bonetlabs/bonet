@@ -292,6 +292,21 @@ static __always_inline int __bnt_write(struct xdp_md *ctx, __u32 off, const void
 #endif
 #endif
 
+/*
+ * Global mode ships the globals as frozen BPF assembly (bnt_asm_globals.h),
+ * so their code does not depend on the compiler that builds the program. The
+ * asm is in clang's syntax and was built for little-endian targets with
+ * unaligned packet access; elsewhere the C definitions are used. Set
+ * BNT_ASM_GLOBALS=0 to always use the C definitions.
+ */
+#ifndef BNT_ASM_GLOBALS
+#if defined(__clang__) && !BNT_STRICT_ALIGN && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#define BNT_ASM_GLOBALS 1
+#else
+#define BNT_ASM_GLOBALS 0
+#endif
+#endif
+
 #if !BNT_INLINE_ALL && !BNT_STRICT_ALIGN
 /*
  * Global mode without BNT_STRICT_ALIGN: __bnt_read/__bnt_write copy in chunks
@@ -388,6 +403,9 @@ static __always_inline int __bnt_write_wide(struct xdp_md *ctx, __u32 off, const
  * scalar offset and accumulator, never a packet pointer.
  */
 __attribute__((noinline, weak, nonnull(1))) int __bnt_csum_blk_g(struct xdp_md *ctx, __u32 off,
+                                                __wsum seed, __wsum *out);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1))) int __bnt_csum_blk_g(struct xdp_md *ctx, __u32 off,
                                                 __wsum seed, __wsum *out)
 {
     void  *p;
@@ -406,7 +424,11 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_csum_blk_g(struct xdp_md *
     *out = (__wsum)res;
     return BNT_OK;
 }
+#endif
 
+__attribute__((noinline, weak, nonnull(1))) int __bnt_csum_word_g(struct xdp_md *ctx, __u32 off,
+                                                 __wsum seed, __wsum *out);
+#if !BNT_ASM_GLOBALS
 __attribute__((noinline, weak, nonnull(1))) int __bnt_csum_word_g(struct xdp_md *ctx, __u32 off,
                                                  __wsum seed, __wsum *out)
 {
@@ -426,8 +448,11 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_csum_word_g(struct xdp_md 
     *out = (__wsum)res;
     return BNT_OK;
 }
+#endif
 
 /* Reads one packet byte through a global (straight-line data_ptr). */
+__attribute__((noinline, weak, nonnull(1))) int __bnt_csum_byte_g(struct xdp_md *ctx, __u32 off, __u8 *out);
+#if !BNT_ASM_GLOBALS
 __attribute__((noinline, weak, nonnull(1))) int __bnt_csum_byte_g(struct xdp_md *ctx, __u32 off, __u8 *out)
 {
     void *p;
@@ -442,6 +467,7 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_csum_byte_g(struct xdp_md 
     *out = *(__u8 *)p;
     return BNT_OK;
 }
+#endif
 #endif
 
 /*
@@ -709,23 +735,47 @@ static __always_inline int __bnt_l3_csum32(struct xdp_md *ctx, __u32 off,
  */
 #if !BNT_INLINE_ALL
 __attribute__((noinline, weak, nonnull(1))) int __bnt_l4_csum16_g(struct xdp_md *ctx, __u32 off,
+                                                 __be16 from, __be16 to, int mangled);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1))) int __bnt_l4_csum16_g(struct xdp_md *ctx, __u32 off,
                                                  __be16 from, __be16 to, int mangled)
 { return __bnt_l4_csum16(ctx, off, from, to, mangled); }
+#endif
+__attribute__((noinline, weak, nonnull(1))) int __bnt_l4_csum32_g(struct xdp_md *ctx, __u32 off,
+                                                 __be32 from, __be32 to, int mangled);
+#if !BNT_ASM_GLOBALS
 __attribute__((noinline, weak, nonnull(1))) int __bnt_l4_csum32_g(struct xdp_md *ctx, __u32 off,
                                                  __be32 from, __be32 to, int mangled)
 { return __bnt_l4_csum32(ctx, off, from, to, mangled); }
+#endif
+__attribute__((noinline, weak, nonnull(1))) int __bnt_l4_pseudo_csum16_g(struct xdp_md *ctx, __u32 off,
+                                                        __be16 from, __be16 to, int mangled);
+#if !BNT_ASM_GLOBALS
 __attribute__((noinline, weak, nonnull(1))) int __bnt_l4_pseudo_csum16_g(struct xdp_md *ctx, __u32 off,
                                                         __be16 from, __be16 to, int mangled)
 { return __bnt_l4_pseudo_csum16(ctx, off, from, to, mangled); }
+#endif
+__attribute__((noinline, weak, nonnull(1))) int __bnt_l4_pseudo_csum32_g(struct xdp_md *ctx, __u32 off,
+                                                        __be32 from, __be32 to, int mangled);
+#if !BNT_ASM_GLOBALS
 __attribute__((noinline, weak, nonnull(1))) int __bnt_l4_pseudo_csum32_g(struct xdp_md *ctx, __u32 off,
                                                         __be32 from, __be32 to, int mangled)
 { return __bnt_l4_pseudo_csum32(ctx, off, from, to, mangled); }
+#endif
+__attribute__((noinline, weak, nonnull(1))) int __bnt_l3_csum16_g(struct xdp_md *ctx, __u32 off,
+                                                 __be16 from, __be16 to);
+#if !BNT_ASM_GLOBALS
 __attribute__((noinline, weak, nonnull(1))) int __bnt_l3_csum16_g(struct xdp_md *ctx, __u32 off,
                                                  __be16 from, __be16 to)
 { return __bnt_l3_csum16(ctx, off, from, to); }
+#endif
+__attribute__((noinline, weak, nonnull(1))) int __bnt_l3_csum32_g(struct xdp_md *ctx, __u32 off,
+                                                 __be32 from, __be32 to);
+#if !BNT_ASM_GLOBALS
 __attribute__((noinline, weak, nonnull(1))) int __bnt_l3_csum32_g(struct xdp_md *ctx, __u32 off,
                                                  __be32 from, __be32 to)
 { return __bnt_l3_csum32(ctx, off, from, to); }
+#endif
 #define __bnt_l4_csum16        __bnt_l4_csum16_g
 #define __bnt_l4_csum32        __bnt_l4_csum32_g
 #define __bnt_l4_pseudo_csum16 __bnt_l4_pseudo_csum16_g
@@ -999,6 +1049,9 @@ __BNT_SHIFT_REMOVE_FIXED(40)
  * offset (off + 14), so the post-adjust writes need no barrier (no walk widens
  * the offset). */
 __attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
@@ -1053,6 +1106,7 @@ int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci
     __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(tpid));
     return BNT_OK;
 }
+#endif
 #endif
 
 /**
@@ -1119,6 +1173,9 @@ static __always_inline int bnt_eth__insert_vlan(bnt_eth *eth, __u16 tpid, __u16 
  * EtherType, then shift-remove the 4-byte tag. bpf_xdp_adjust_head runs LAST (no
  * packet write follows the resize), so no post-adjust barrier is needed. */
 __attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_remove_vlan_g(struct xdp_md *ctx, __u32 off);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_eth_remove_vlan_g(struct xdp_md *ctx, __u32 off)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
@@ -1150,6 +1207,7 @@ int __bnt_eth_remove_vlan_g(struct xdp_md *ctx, __u32 off)
 
     return __bnt_shift_remove_4(ctx, vlan_off);
 }
+#endif
 #endif
 
 /**
@@ -1212,6 +1270,10 @@ static __always_inline int bnt_eth__remove_vlan(bnt_eth *eth)
 /* One-global insert: Ethernet/VLAN walk + shift + IPv4 header write fused. The
  * header write after bpf_xdp_adjust_head needs a barrier on prefix_len (see
  * __bnt_eth_insert_ipv6_g). */
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
+                             __be32 saddr, __be32 daddr);
+#if !BNT_ASM_GLOBALS
 __attribute__((noinline, weak, nonnull(1)))
 int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
                              __be32 saddr, __be32 daddr)
@@ -1289,6 +1351,7 @@ int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
     __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(ETH_P_IP));
     return BNT_OK;
 }
+#endif
 #endif
 
 /**
@@ -1382,6 +1445,10 @@ static __always_inline int bnt_eth__insert_ipv4(bnt_eth *eth,
  * and is more clang-version-sensitive than the split version. */
 __attribute__((noinline, weak, nonnull(1)))
 int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
+                             const struct in6_addr *saddr, const struct in6_addr *daddr);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
                              const struct in6_addr *saddr, const struct in6_addr *daddr)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
@@ -1454,6 +1521,7 @@ int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
     __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(ETH_P_IPV6));
     return BNT_OK;
 }
+#endif
 #endif
 
 /**
@@ -1541,6 +1609,9 @@ static __always_inline int bnt_eth__insert_ipv6(bnt_eth *eth,
 /* One-global remove: Ethernet/VLAN walk + inner-header reads + EtherType rewrite
  * + shift-remove fused. bpf_xdp_adjust_head runs LAST, so no barrier is needed. */
 __attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_remove_ipv4_g(struct xdp_md *ctx, __u32 off);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_eth_remove_ipv4_g(struct xdp_md *ctx, __u32 off)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
@@ -1613,6 +1684,7 @@ int __bnt_eth_remove_ipv4_g(struct xdp_md *ctx, __u32 off)
     return __bnt_shift_remove_20(ctx, prefix_len);
 }
 #endif
+#endif
 
 /**
  * @ingroup bnt_eth
@@ -1683,6 +1755,9 @@ static __always_inline int bnt_eth__remove_ipv4(bnt_eth *eth)
 #if !BNT_INLINE_ALL
 /* One-global remove: Ethernet/VLAN walk + inner-header reads + EtherType rewrite
  * + shift-remove fused. bpf_xdp_adjust_head runs LAST, so no barrier is needed. */
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_remove_ipv6_g(struct xdp_md *ctx, __u32 off);
+#if !BNT_ASM_GLOBALS
 __attribute__((noinline, weak, nonnull(1)))
 int __bnt_eth_remove_ipv6_g(struct xdp_md *ctx, __u32 off)
 {
@@ -1755,6 +1830,7 @@ int __bnt_eth_remove_ipv6_g(struct xdp_md *ctx, __u32 off)
 
     return __bnt_shift_remove_40(ctx, prefix_len);
 }
+#endif
 #endif
 
 /**
@@ -2123,6 +2199,10 @@ struct __bnt_srv6_segs { struct in6_addr s[BNT_SRV6_MAX_SEGS]; };
  * than the read|shift|write split. */
 __attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
+                             struct __bnt_srv6_segs *segs, __u8 n_segs);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
                              struct __bnt_srv6_segs *segs, __u8 n_segs)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
@@ -2210,6 +2290,7 @@ int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
     }
     return BNT_OK;
 }
+#endif
 #endif /* !BNT_INLINE_ALL */
 
 /**
@@ -2377,6 +2458,9 @@ static __always_inline int bnt_ipv6__insert_srh(bnt_ipv6 *ip6,
  * bit) + shift + LSE/ethertype write, fused. Barrier on prefix_len for the
  * post-adjust write (see __bnt_eth_insert_ipv6_g). */
 __attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc, __u8 ttl);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
 int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc, __u8 ttl)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
@@ -2433,6 +2517,7 @@ int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc,
     __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(ETH_P_MPLS_UC));
     return BNT_OK;
 }
+#endif
 #endif
 
 /**
@@ -2499,6 +2584,10 @@ static __always_inline int bnt_eth__insert_mpls(bnt_eth *eth,
     }
 #endif
 }
+
+#if !BNT_INLINE_ALL && BNT_ASM_GLOBALS
+#include "bnt_asm_globals.h"
+#endif
 
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop

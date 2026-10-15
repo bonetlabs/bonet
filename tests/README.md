@@ -37,12 +37,15 @@ payloads.
 make check-local
 ```
 
-`globals/` loads each global in the default build and, under
-`BPF_F_STRICT_ALIGNMENT`, in a `BNT_STRICT_ALIGN=1` build. The kernel only
-verifies the globals a program calls, so this covers the ones no other test
-reaches. The `bnt_debug.h` globals are left out.
+`globals/` loads each global in three builds: the default one, where the
+globals come from `bnt_asm_globals.h`; one with the C globals
+(`BNT_ASM_GLOBALS=0`); and, under `BPF_F_STRICT_ALIGNMENT`, a
+`BNT_STRICT_ALIGN=1` build. The kernel only verifies the globals a program
+calls, so this covers the ones no other test reaches. The `bnt_debug.h`
+globals are left out.
 
-`units/` runs the cases in `cases.py` with `BPF_PROG_TEST_RUN`, in both builds,
+`units/` runs the cases in `cases.py` with `BPF_PROG_TEST_RUN`, in the same
+three builds,
 and compares the return value, the output buffer and the packet with
 `expected.json`. After an intended behaviour change, record new results with
 `make -C units update-expected`. For the FIB lookups the output buffer is not

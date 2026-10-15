@@ -37,6 +37,9 @@
  *   __BNT_PKT_MEMCPY(d, s, n)   memcpy, either side in packet memory
  *   __BNT_PKT_MEMSET0(p, n)     zero n bytes of packet memory
  */
+#ifndef BNT_ASM_GLOBALS
+#define BNT_ASM_GLOBALS 0    /* TC backends have no globals */
+#endif
 #ifndef BNT_STRICT_ALIGN
 #define BNT_STRICT_ALIGN 0   /* TC backends: packet access goes through helpers */
 #endif

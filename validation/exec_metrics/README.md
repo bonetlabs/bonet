@@ -174,6 +174,26 @@ on the FIB globals the two extra loads of the translated code lower the
 Skylake estimate from 133 to 123. Differences of a few cycles between builds
 say nothing.
 
+## The shipped asm
+
+`src/bnt_asm_globals.h`, which global mode uses by default, is generated from
+the choice of one configuration per global:
+
+```bash
+./gen_asm.py data/choices-kernel7.0.txt results/objs
+```
+
+`data/choices-kernel7.0.txt` has one `global: configuration` line per global.
+For each one, `bpfasm.py` prints the function from that configuration's object
+as clang BPF assembly (jumps to labels, calls to other globals by name, the
+`ja +0` that Merlin leaves dropped), and `gen_asm.py` wraps it in a function
+with the C prototype, so the BTF keeps the parameter names. The generated
+header stops the build when a limit that shapes the globals is not at its
+default, or for strict-alignment and big-endian builds.
+
+`candidates.py` builds the C globals (`BNT_ASM_GLOBALS=0`), so regenerating
+the candidates does not depend on the shipped asm.
+
 ## Limits
 
 - `bpf_fib_lookup` is a stub that returns `BPF_FIB_LKUP_RET_FWD_DISABLED`, as

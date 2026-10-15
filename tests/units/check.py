@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run every case in the kernel and compare with expected.json.
 
-For each built variant (default, strict) runs build/<variant>/case_<n>.o with
+For each built variant (default, c, strict) runs build/<variant>/case_<n>.o with
 run_case and compares the global's return value, the out buffer and the packet
 after the call with the recorded results. Needs root.
 
