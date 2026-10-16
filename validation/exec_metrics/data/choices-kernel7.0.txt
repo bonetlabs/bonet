@@ -9,7 +9,7 @@ ctx_find_ipv6: clang20-O2+merlin_llvm+merlin_bc
 ctx_find_tcp: clang20-Os+merlin_llvm+merlin_bc
 ctx_find_udp: clang20-O2+merlin_llvm+merlin_bc
 eth_insert_ipv4: clang22-O2+merlin_bc
-eth_insert_ipv6: clang20-O2+merlin_llvm+merlin_bc
+eth_insert_ipv6: clang22-O2+merlin_bc
 eth_insert_mpls: clang22-O2+merlin_bc
 eth_insert_vlan: clang18-O2
 eth_meta: clang20-O2+merlin_bc

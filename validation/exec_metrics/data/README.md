@@ -34,3 +34,10 @@ whole objects; 368 rows are globals the verifier rejects (no kernel result);
 on the other 10240 the kernel's result matches `tests/units/expected.json`,
 and the interpreter agrees with the kernel both on the compiled code and on
 the code as the verifier translated it.
+
+`eth_insert_ipv6` is not the best configuration of this table: that one
+(`clang20-O2+merlin_llvm+merlin_bc`) is rejected by the 6.8 verifier, which
+does not carry a bound checked after a spill to the spilled copy. The choice
+is the configuration that loads on 6.8 (Ubuntu 6.8.0-124) with the fewest
+executed loads, stores and multiplications, then the fewest executed
+instructions: `clang22-O2+merlin_bc`. The other 67 choices load on 6.8.
