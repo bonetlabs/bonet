@@ -1,0 +1,59 @@
+# Paper profile: the three XDP workloads of Fig. 4, with the asm globals
+# measured next to the C globals the paper reported.
+#
+# Method as in the paper (PDR, 0.995 delivery ratio, 78-byte frames, 10 s
+# trials, 5 kpps window, 10 searches). Each repetition runs every
+# workload/case pair once, in a shuffled order.
+
+build:
+  clang: clang-18            # Ubuntu 24.04 clang 18.1.3, as in the paper
+  # Global mode needs -mcpu=v3 (bnt_core.h); every case uses the same flags.
+  cflags: [-O2, -g, -Wall, -Wextra, -Werror=incompatible-pointer-types,
+           -target, bpf, -mcpu=v3, -D__TARGET_ARCH_x86]
+
+cases:
+  plain:       {label: Plain eBPF,         src: baseline,  hook: xdp}
+  inline:      {label: BONet Inline,       src: framework, hook: xdp, defines: [BNT_INLINE_ALL=1]}
+  globals-c:   {label: BONet Global (C),   src: framework, hook: xdp, defines: [BNT_ASM_GLOBALS=0]}
+  globals-asm: {label: BONet Global (asm), src: framework, hook: xdp}
+  kernel:      {label: Kernel,             hook: kernel}
+
+# Reference for the "vs" columns of the report.
+baseline_case: plain
+
+pdr:
+  repetitions: 10
+  frame_size: 78
+  start_pps: 50000
+  max_pps: 3000000
+  window_pps: 5000
+  delivery_ratio: 0.995
+  duration_s: 10
+  warmup_trials: 1           # trials discarded before each measured one
+  samples: 1
+  settle_s: 1                # after attaching, before the first trial
+
+check:
+  packets: 64                # sent at check_pps before every search
+  pps: 1000
+
+experiments:
+  - name: MMLF
+    program: mmlf            # xdp_mmlf.c in baseline/ and framework/
+    traffic: ipv4
+    kernel: mmlf             # iptables mangle TOS + routing
+    expect: mmlf
+
+  - name: DNAT
+    program: static_dnat
+    traffic: ipv4
+    udp_checksum: true
+    kernel: dnat             # iptables nat PREROUTING (conntrack)
+    expect: dnat
+
+  - name: ENCAP
+    program: ip6ip6_encap
+    traffic: ipv6
+    traffic_dst_ipv6: "fd04::100"
+    kernel: ip6ip6           # ip6ip6 tunnel, encaplimit none
+    expect: ip6ip6

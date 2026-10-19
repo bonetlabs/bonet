@@ -1,0 +1,10 @@
+# Debug profile: the paper workloads with one quick search each, to check the
+# testbed end to end (about 10 minutes).
+
+include: paper.yaml
+
+pdr:
+  repetitions: 1
+  window_pps: 100000
+  duration_s: 3
+  warmup_trials: 0

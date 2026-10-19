@@ -71,8 +71,8 @@ make -C framework EXTRA_CFLAGS="-DBNT_LEGACY_KERNEL=1"                     # leg
 ```
 
 `framework_inlined/` is a convenience target that builds `framework/`'s sources
-with `BNT_INLINE_ALL=1`, so the globals and inline objects coexist (used by the
-`macro_perf` `framework-inlined` case).
+with `BNT_INLINE_ALL=1`, so the globals and inline objects coexist. (`macro_perf`
+builds its own objects; see `macro_perf/profiles/`.)
 
 ## Software-Metrics Setup
 

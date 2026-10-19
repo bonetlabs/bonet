@@ -1,0 +1,66 @@
+# The machines the benchmark runs on: written by `./remote.py setup` from what
+# it finds on TREX and SUT (the hosts named by trex.ssh and sut.ssh in
+# ~/.ssh/config). Values here are kept on the next setup: edit to override,
+# delete a key (or the file) to have it found again.
+#
+# This slice (FABRIC, two VMs, three ConnectX-6 VF links):
+#   TREX enp7s0 07:00.0  ----->  SUT enp9s0   traffic in
+#   TREX enp8s0 08:00.0  <-----  SUT enp8s0   traffic out
+#   TREX enp9s0 09:00.0  -----   SUT enp7s0   control (the VMs cannot reach
+#                                             each other's management address)
+
+trex:
+  ssh: TREX                  # ssh destination from this machine (~/.ssh/config)
+  home: /home/ubuntu/bonet-bench
+  trex_dir: /opt/trex/v3.08
+  trex_version: v3.08
+  hugepages_2m: 2048
+  ports:
+    - {pci: "07:00.0", iface: enp7s0, mac: "12:6c:50:70:b9:6d"}   # port 0, tx
+    - {pci: "08:00.0", iface: enp8s0, mac: "12:8b:04:67:af:fa"}   # port 1, rx
+  tx_port: 0
+  rx_port: 1
+  master_thread: 0
+  latency_thread: 1
+  threads: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  port_bandwidth_gb: 100
+  port_mtu: 1500             # the VFs cannot go above the PF's 1500
+
+sut:
+  ssh: SUT                   # ssh destination from this machine
+  # FABRIC does not let the VMs reach each other on the management network,
+  # so TREX reaches the SUT over the spare link (addresses set by setup).
+  control:
+    trex_iface: enp9s0
+    sut_iface: enp7s0
+    trex_ip: 192.168.250.1
+    sut_ip: 192.168.250.2
+    prefix: 30
+  user: ubuntu
+  home: /home/ubuntu/bonet-bench
+  # Every packet is steered to this RX queue, whose interrupt (and the TX
+  # queue XDP_REDIRECT uses on that CPU) is pinned to rx_cpu.
+  rx_queue: 2
+  rx_cpu: 2
+
+network:
+  sut_rx_iface: enp9s0
+  sut_rx_mac: "12:25:82:f3:87:07"
+  sut_rx_ipv4: 10.8.0.2
+  sut_rx_prefix: 24
+  sut_rx_ipv6: "fd08::2"
+  sut_rx_ipv6_prefix: 64
+
+  sut_tx_iface: enp8s0
+  sut_tx_mac: "0e:d1:70:fe:1a:6b"
+  sut_tx_ipv4: 10.7.0.2
+  sut_tx_prefix: 24
+  sut_tx_ipv6: "fd07::2"
+  sut_tx_ipv6_prefix: 64
+
+  # TRex side. tg_tx_* is the source of the generated traffic, tg_rx_* the
+  # next hop the SUT forwards to (a permanent neighbor on the SUT).
+  tg_tx_ipv4: 10.8.0.1
+  tg_tx_ipv6: "fd08::1"
+  tg_rx_ipv4: 10.7.0.1
+  tg_rx_ipv6: "fd07::1"

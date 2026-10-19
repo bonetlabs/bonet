@@ -1,0 +1,33 @@
+# The experiments of the old config.{debug,paper,paper-xdp}.yaml: IPv4/IPv6
+# forwarding, MMLF, DNAT and encapsulation, on XDP and TC.
+#
+# Only MMLF, DNAT and ENCAP (ip6ip6) have a model of the expected output; the
+# others are only checked to come back through the XDP/TC path.
+
+include: paper.yaml
+
+cases:
+  plain:       {label: Plain eBPF,         src: baseline,  hook: xdp}
+  inline:      {label: BONet Inline,       src: framework, hook: xdp, defines: [BNT_INLINE_ALL=1]}
+  globals-asm: {label: BONet Global (asm), src: framework, hook: xdp}
+  plain-tc:    {label: Plain eBPF TC,      src: baseline,  hook: tc}
+  # On TC every operation is inlined whatever BNT_INLINE_ALL says.
+  bonet-tc:    {label: BONet TC,           src: framework, hook: tc}
+  kernel:      {label: Kernel,             hook: kernel}
+
+experiments:
+  - {name: FIB4,   program: fib4_forward, traffic: ipv4}
+  - {name: MMLF,   program: mmlf, traffic: ipv4, kernel: mmlf, expect: mmlf}
+  - {name: DNAT,   program: static_dnat, traffic: ipv4, udp_checksum: true, kernel: dnat, expect: dnat}
+  - {name: IPIP,   program: ipip_encap, traffic: ipv4, traffic_dst_ipv4: 10.100.0.1, kernel: ipip}
+  - {name: SRV6,   program: srv6_encap, traffic: ipv4, traffic_dst_ipv4: 10.100.0.1, kernel: srv6}
+  - {name: FIB6,   program: fib6_forward, traffic: ipv6}
+  - {name: MMLF6,  program: mmlf6, traffic: ipv6, kernel: mmlf6}
+  - {name: DNAT6,  program: static_dnat6, traffic: ipv6, udp_checksum: true, kernel: dnat6}
+  - name: ENCAP
+    program: ip6ip6_encap
+    traffic: ipv6
+    traffic_dst_ipv6: "fd04::100"
+    kernel: ip6ip6
+    expect: ip6ip6
+    cases: [plain, inline, globals-asm, kernel]   # there is no tc_ip6ip6_encap.c

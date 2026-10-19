@@ -10,8 +10,7 @@ coexist for side-by-side comparison.
 
 The inline build differs from the globals build **only on XDP**. On TC,
 `BNT_INLINE_ALL` is forced to `1` regardless, so the `tc_*.o` produced here are
-byte-identical to `../framework/`'s. The `macro_perf` `framework-inlined` case
-therefore attaches the `xdp_*` objects from this directory.
+byte-identical to `../framework/`'s.
 
 Build (from this directory):
 

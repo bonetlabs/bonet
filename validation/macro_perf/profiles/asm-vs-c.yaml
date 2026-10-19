@@ -1,0 +1,13 @@
+# The asm globals against the C globals only, with twice the repetitions of
+# the paper profile, for a tighter interval on their difference.
+
+include: paper.yaml
+
+cases:
+  globals-c:   {label: BONet Global (C),   src: framework, hook: xdp, defines: [BNT_ASM_GLOBALS=0]}
+  globals-asm: {label: BONet Global (asm), src: framework, hook: xdp}
+
+baseline_case: globals-c
+
+pdr:
+  repetitions: 20
