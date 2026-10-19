@@ -12,7 +12,9 @@ eBPF programs against equivalent programs written with the `bnt` framework.
   sources of its own; its Makefile compiles `framework/`'s sources with the
   inline flag.
 - `exec_metrics/`: a BPF interpreter that counts the instructions each XDP
-  global executes, to compare builds of the globals.
+  global, and each workload program, executes, to compare builds.
+- `micro_perf/`: execution time of the workloads and the globals in the
+  kernel (`BPF_PROG_TEST_RUN`), on one machine.
 - `macro_perf/`: two-machine forwarding throughput benchmarks.
 - `softeng_perf/`: software-engineering metrics, verifier-log metrics, and
   cognitive-complexity reports.

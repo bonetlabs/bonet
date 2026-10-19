@@ -27,6 +27,7 @@ validation/results/
 validation/softeng_perf/results/
 validation/exec_metrics/results/
 validation/exec_metrics/build/
+validation/micro_perf/build/
 validation/plots/
 
 # Generated API reference
