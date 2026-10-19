@@ -34,13 +34,14 @@ static __always_inline int parse_ipv4_udp(struct xdp_md *ctx, bnt_ipv4 *ip4, bnt
     __u32 l4_off;
     __u16 udp_len;
     __u8 proto;
-    int is_fragment;
+    bool is_fragment;
     int ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
     if (ret)
         return ret;
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return BNT_ERR_BAD_PROTO;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -91,7 +92,7 @@ int xdp_ipv4_udp_saddr_full(struct xdp_md *ctx)
     ret = parse_ipv4_udp(ctx, &ip4, &udp);
     if (ret)
         return XDP_PASS;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         return XDP_PASS;
 
@@ -100,7 +101,7 @@ int xdp_ipv4_udp_saddr_full(struct xdp_md *ctx)
         bnt_test_fail_detail((__u64)(unsigned int)ret, PORT_TO, 1, 0, 0);
         return XDP_ABORTED;
     }
-    ret = bnt_udp__set_dest_no_csum(&udp, PORT_TO);
+    ret = bnt_udp__set_dport_no_csum(&udp, PORT_TO);
     if (ret) {
         bnt_test_fail_detail((__u64)(unsigned int)ret, PORT_TO, 2, 0, 0);
         return XDP_ABORTED;
@@ -162,7 +163,7 @@ int xdp_ipv4_udp_saddr_full_udp_csum(struct xdp_md *ctx)
         bnt_test_fail_detail((__u64)(unsigned int)ret, PORT_TO, 7, 0, 0);
         return XDP_ABORTED;
     }
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret) {
         bnt_test_fail_detail((__u64)(unsigned int)ret, PORT_TO, 8, 0, 0);
         return XDP_ABORTED;

@@ -12,7 +12,7 @@ Validates:
 - `bnt_eth__parse()`
 - `bnt_ipv4__parse()`
 - `bnt_tcp__parse()`
-- `bnt_tcp__get_dest()`
+- `bnt_tcp__get_dport()`
 - `bnt_tcp__get_flags()`
 
 Behavior:
@@ -110,7 +110,7 @@ Expected result:
 Validates:
 - IPv4 / IPv6 dual-stack dispatch
 - `bnt_tcp__parse()` on the skb backend
-- `bnt_tcp__set_dest()` checksum adjustment
+- `bnt_tcp__set_dport()` checksum adjustment
 
 Behavior:
 - Rewrites TCP destination port 80 to 8080.
@@ -129,7 +129,7 @@ Validates:
 - `bnt_ipv4__set_daddr()`
 - L3 checksum update
 - TCP/UDP pseudo-header checksum updates after IPv4 address rewrite
-- `bnt_tcp__set_dest()` / `bnt_udp__set_dest()` on skb packets
+- `bnt_tcp__set_dport()` / `bnt_udp__set_dport()` on skb packets
 
 Behavior:
 - Rewrites destination IPv4 `192.168.1.100` to `10.0.0.2`.
@@ -352,4 +352,4 @@ tc filter add dev <iface> egress bpf da obj tc_ipv4_dnat.o sec classifier
 
 ## Header requirements
 
-The v2 examples intentionally use the system libbpf headers through includes such as `<bpf/bpf_helpers.h>` and `<bpf/bpf_endian.h>`. Install `libbpf-dev` or your distribution's equivalent before building.
+The examples use the system libbpf headers through includes such as `<bpf/bpf_helpers.h>` and `<bpf/bpf_endian.h>`. Install `libbpf-dev` or your distribution's equivalent before building.

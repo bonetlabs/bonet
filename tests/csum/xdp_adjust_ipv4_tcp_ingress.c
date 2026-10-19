@@ -47,13 +47,14 @@ int xdp_adjust_ipv4_tcp_ingress(struct xdp_md *ctx)
     __u32 tcp_hlen;
     __u32 payload_len;
     __u32 l3_off, l4_off;
-    int   is_fragment;
+    bool  is_fragment;
     int   ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
     if (ret)
         return XDP_PASS;
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return XDP_PASS;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -80,7 +81,7 @@ int xdp_adjust_ipv4_tcp_ingress(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    ret = bnt_tcp__get_dest(&tcp, &dport);
+    ret = bnt_tcp__get_dport(&tcp, &dport);
     if (ret || dport != PORT_FROM)
         return XDP_PASS;
 
@@ -92,7 +93,8 @@ int xdp_adjust_ipv4_tcp_ingress(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    tcp_hlen = bnt_tcp__get_doff(&tcp) * 4;
+    bnt_tcp__get_doff(&tcp, &tcp_hlen);   /* 0 on error */
+    tcp_hlen *= 4;
     if (!tcp_hlen || old_total_len < ip_hlen + tcp_hlen)
         return XDP_PASS;
 
@@ -107,7 +109,7 @@ int xdp_adjust_ipv4_tcp_ingress(struct xdp_md *ctx)
     }
 
     /* Rewrite destination port for the listener */
-    ret = bnt_tcp__set_dest_no_csum(&tcp, PORT_TO);
+    ret = bnt_tcp__set_dport_no_csum(&tcp, PORT_TO);
     if (ret)
         return XDP_ABORTED;
 
@@ -125,12 +127,13 @@ int xdp_adjust_ipv4_tcp_ingress_csum(struct xdp_md *ctx)
     bnt_tcp  tcp;
     __u8  proto;
     __u32 l3_off, l4_off;
-    int   is_fragment;
+    bool  is_fragment;
     int   ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
     if (ret) return XDP_ABORTED;
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP) return XDP_ABORTED;
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP) return XDP_ABORTED;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
     if (ret) return XDP_ABORTED;

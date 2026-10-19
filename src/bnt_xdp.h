@@ -42,18 +42,16 @@
 #endif
 
 /*
- * Verifier-hardening barriers
+ * Build knobs:
+ *   BNT_INLINE_ALL     0 = global mode (default), 1 = fully inline.
+ *   BNT_LEGACY_KERNEL  for target kernels older than 5.12, which cannot run the
+ *                      global mode. Forces inline mode and turns on the barriers
+ *                      below, which steer clang's codegen into shapes those
+ *                      verifiers follow, at the cost of more processed_insns and
+ *                      stack. It has to be set by hand: the build cannot know
+ *                      the target kernel.
  *
- * BNT_LEGACY_KERNEL forces inline mode and enables an extra set of barriers that
- * steer clang's codegen into shapes the BPF verifier can follow.  They are
- * semantically transparent (no runtime behaviour change) and exist for inline
- * builds that cannot rely on the global sub-program boundary for isolation:
- * older/stricter verifiers (kernels before 5.12, where the default global mode
- * is unavailable so inline is mandatory) and aggressive compilers.  They add
- * processed_insns and stack depth, so they are off by default; in global mode
- * the sub-program boundary provides the same isolation for free.
- *
- * Gated on BNT_LEGACY_KERNEL (inline-only hardening):
+ * Gated on BNT_LEGACY_KERNEL:
  *   1. asm volatile("" : "+r"(ctx)) in __bnt_xdp_fresh_ctx — gives the verifier
  *      an independent data/data_end pair at every bounds check (no caching of
  *      ctx->data across accesses).
@@ -62,8 +60,7 @@
  *   3. volatile on the __bnt_csum_range loop counters — keeps their tnum bounds
  *      from being re-derived off the unbounded stack copy of `len`.
  *
- * Always on, in EVERY mode (structural — the verifier has no alternative, so it
- * is not optional and not gated):
+ * Always on:
  *   4. __bnt_shift_insert / __bnt_shift_remove copy the header prefix through a
  *      stack buffer: a packet pointer at a runtime offset (data+n) has verifier
  *      range 0 and cannot be accessed directly.
@@ -72,24 +69,9 @@
  *      and a mask on the SRH segment index — so the narrowed bound survives
  *      instead of being re-derived.
  *
- * NOTE: this barrier set is best-effort, not a completeness guarantee.  In
- * inline mode the API is fused with the (unbounded) caller, so caller-driven
- * register/stack pressure can make clang spill or fold in ways no fixed set of
- * barriers can pre-empt.  The only caller-independent guarantee is global mode.
- */
-/*
- * Two build knobs:
- *   BNT_INLINE_ALL     0 = global isolation (default), 1 = fully inline.
- *   BNT_LEGACY_KERNEL  set for target kernels older than 5.12, which cannot
- *                      run the global mode.  Forces inline mode AND turns on the
- *                      inline-hardening barriers — the only configuration that
- *                      verifies on those older kernels.  Set it explicitly (the
- *                      build cannot detect the *target* kernel version); the
- *                      default stays global.
- *
- * The barriers below are gated on BNT_LEGACY_KERNEL.  Since legacy forces inline,
- * it can never coexist with global mode, so global builds are barrier-free by
- * construction — the sub-program boundary already isolates the API there.
+ * In inline mode the API is fused with the caller, whose register and stack
+ * pressure can still make clang spill or fold in ways these barriers do not
+ * cover. Only global mode is independent of the caller.
  */
 #ifndef BNT_LEGACY_KERNEL
 #define BNT_LEGACY_KERNEL 0
@@ -471,26 +453,12 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_csum_byte_g(struct xdp_md 
 #endif
 
 /*
- * XDP-specific __bnt_csum_range:
- *
- * Two compounding verifier problems require the approach below:
- *
- * (1) Stack-slot tnum loss: `len` reloaded from a stack slot is unbounded
- *     (mmmmmmmm) even after an earlier conditional check, because the
- *     verifier does not back-propagate register bounds to the originating
- *     stack slot.
- *
- * (2) Compiler re-derivation: even if n_chunks / n_words are precomputed
- *     from the bounded register, clang treats them as re-derivable from `len`
- *     (n_chunks == len >> log2(CHUNK)) and may reload `len` from its own
- *     mmmmmmmm stack slot and recompute inline, discarding the bounded slot.
- *
- * Fix: declare n_chunks and n_words as `volatile`.  volatile forces the
- * compiler to (a) materialise a dedicated stack slot for each variable,
- * (b) write it exactly once from the bounded register value, and (c) always
- * reload from that slot rather than recomputing from `len`.  The verifier
- * preserves the tnum of the initial store, so subsequent reloads carry the
- * tight [0, BNT_MAX_PAYLOAD/CHUNK] bound into every loop condition.
+ * XDP __bnt_csum_range. `len` reloaded from its stack slot is unbounded even
+ * after the check on it (the verifier does not carry a register's bounds back
+ * to the slot), and clang may recompute n_chunks/n_words from that reload
+ * instead of keeping the bounded values. Under BNT_LEGACY_KERNEL they are
+ * volatile: each gets its own slot, written once from the bounded register, so
+ * every loop condition sees the [0, BNT_MAX_PAYLOAD/CHUNK] bound.
  */
 static __always_inline int __bnt_csum_range(struct xdp_md *ctx, __u32 off, __u32 len,
                                              __wsum seed, __wsum *out)
@@ -513,9 +481,7 @@ static __always_inline int __bnt_csum_range(struct xdp_md *ctx, __u32 off, __u32
     if (off > 0xffffu - len)
         return BNT_ERR_TRUNC;
 
-    /* Computed from `len` while it is still in a bounded register.
-     * volatile prevents the compiler from replacing loads with a
-     * re-derivation from the mmmmmmmm `len` stack slot. */
+    /* computed while len is still bounded; see above */
 #if BNT_LEGACY_KERNEL
     volatile __u32 n_chunks = len >> __builtin_ctz(BNT_CSUM_CHUNK);
     volatile __u32 n_words  = (len & (__u32)(BNT_CSUM_CHUNK - 1)) >> 2;
@@ -527,7 +493,7 @@ static __always_inline int __bnt_csum_range(struct xdp_md *ctx, __u32 off, __u32
 
 #if !BNT_INLINE_ALL
     /*
-     * Level 2: carry a scalar offset (cur) across the loop back-edge and
+     * Global mode: carry a scalar offset (cur) across the loop back-edge and
      * re-derive a fresh, range-checked packet pointer each iteration.  When off
      * arrives from a *_meta_g result it has a wide var_off; a packet pointer
      * advanced across a back-edge loses its range under that var_off, so
@@ -583,7 +549,7 @@ static __always_inline int __bnt_csum_range(struct xdp_md *ctx, __u32 off, __u32
 #else
     /*
      * Keep this hot checksum path in its compact direct-load form.  The
-     * generic XDP helpers intentionally break ctx load CSE, but doing that
+     * generic XDP helpers break ctx load CSE, but doing that
      * inside the csum loop increases verifier state pressure.
      */
     void *data_end = (void *)(long)ctx->data_end;
@@ -725,7 +691,7 @@ static __always_inline int __bnt_l3_csum32(struct xdp_md *ctx, __u32 off,
 }
 
 /*
- * Level 2: confine the incremental checksum updaters in global BPF functions.
+ * Global mode: confine the incremental checksum updaters in global BPF functions.
  * The inline versions read+write the checksum field at a caller-supplied offset;
  * once that offset arrives unconstrained from another global (e.g. a *_meta_g
  * result), the inline packet access fails range tracking.  Wrapping each updater
@@ -850,25 +816,12 @@ static __always_inline int bnt_ipv4__set_hlen_no_csum(bnt_ipv4 *ip, __u32 hlen)
  *
  *   62 bytes  Ethernet (14) + QinQ (8) + IPv6 base (40)
  *
- * This value is the BPF-verifier loop bound: the verifier explores one state
- * per loop iteration, so a tighter bound directly reduces processed_insns.
- * The default of 64 is intentionally conservative and covers all standard
- * Ethernet/VLAN/IPv6 stacks without requiring any configuration.
- *
- * HOW TO TUNE:
- *   Define this macro before #include <bnt_xdp.h> to override the default.
- *
- *   Reduce it when you know your programs never exceed a shallower prefix:
- *     #define BNT_XDP_MAX_HEADER_PREFIX 14   // plain Ethernet only
- *     #define BNT_XDP_MAX_HEADER_PREFIX 22   // Ethernet + up to QinQ
- *
- *   Increase it when your programs operate on deeper stacks, for example
- *   inserting headers after an outer tunneling layer (GRE, IPIP, etc.):
- *     #define BNT_XDP_MAX_HEADER_PREFIX 94   // Ethernet + QinQ + IPv4 + IPv6
- *
- *   There is no kernel-imposed ceiling on this value other than the BPF stack
- *   limit (512 bytes) and practical packet structure.  If the runtime prefix
- *   exceeds the configured bound, bnt returns BNT_ERR_TOO_DEEP.
+ * It is also the loop bound of the prefix copy, so a smaller value means less
+ * verifier work. The default of 64 covers Ethernet/VLAN/IPv6 stacks. Define it
+ * before #include <bnt_xdp.h> to change it, e.g. 22 for Ethernet + QinQ only,
+ * or 94 for Ethernet + QinQ + IPv4 + IPv6. The variable-size shift copies the
+ * prefix through the stack, which bounds it at 512 bytes. A prefix longer than
+ * the bound returns BNT_ERR_TOO_DEEP.
  */
 #ifndef BNT_XDP_MAX_HEADER_PREFIX
 #define BNT_XDP_MAX_HEADER_PREFIX 64
@@ -964,12 +917,15 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_insert(struct xdp_md *ctx,
     data_end = __bnt_xdp_data_end(ctx);
     if ((__u8 *)data + BNT_XDP_MAX_HEADER_PREFIX > (__u8 *)data_end)
         return BNT_ERR_TRUNC;
-    /* Save the whole prefix area, not just prefix_len bytes: no exit that
-     * depends on prefix_len (see __BNT_COPY_LIMIT), and every byte of buf is
-     * written, so the copy back may read up to any prefix_len. */
 #if BNT_STRICT_ALIGN
-    for (i = 0; i < BNT_XDP_MAX_HEADER_PREFIX; i++)
+    /* zeroed: before 6.3 the verifier rejects reading bytes of buf the loop below did not write */
+    __builtin_memset(buf, 0, sizeof(buf));
+    lim = __BNT_COPY_LIMIT32(prefix_len);
+    for (i = 0; i < BNT_XDP_MAX_HEADER_PREFIX; i++) {
+        if (i >= lim)
+            break;
         buf[i] = *((__u8 *)data + i);
+    }
 #else
     for (i = 0; i + 8 <= BNT_XDP_MAX_HEADER_PREFIX; i += 8)
         *(__u64 *)(buf + i) = *(__u64 *)((__u8 *)data + i);
@@ -1106,7 +1062,7 @@ int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
     void *p;
     __be16 proto;
-    __u16 outer_proto;
+    __u16 outer_ethertype;
     __u32 prefix_len, cur, i, depth = 0;
     int ret;
 
@@ -1114,7 +1070,7 @@ int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci
     if (ret)
         return ret;
     proto = __BNT_PKT_LOAD(*(__be16 *)p);
-    outer_proto = bpf_ntohs(proto);
+    outer_ethertype = bpf_ntohs(proto);
 
     /* Count existing tags so a stack already at the bound is rejected instead
      * of growing past what the bounded readers can walk back. */
@@ -1142,7 +1098,7 @@ int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci
 #endif
     {
         /* write the 4-byte tag as a single aligned store */
-        __be32 tag = bpf_htonl(((__u32)tci << 16) | (__u32)outer_proto);
+        __be32 tag = bpf_htonl(((__u32)tci << 16) | (__u32)outer_ethertype);
         ret = __bnt_data_ptr(ctx, prefix_len, sizeof(__be32), &p);
         if (ret)
             return ret;
@@ -1188,7 +1144,7 @@ static __always_inline int bnt_eth__insert_vlan(bnt_eth *eth, __u16 tpid, __u16 
 #else
     {
         struct __bnt_eth_meta meta;
-        __u16 outer_proto;
+        __u16 outer_ethertype;
         __u32 prefix_len;
         int ret;
         struct bnt_vlan_hdr vlan = {};
@@ -1199,18 +1155,18 @@ static __always_inline int bnt_eth__insert_vlan(bnt_eth *eth, __u16 tpid, __u16 
         if (meta.vlan_depth >= BNT_MAX_VLAN_DEPTH)
             return BNT_ERR_TOO_DEEP;
 
-        ret = bnt_eth__get_outer_proto(eth, &outer_proto);
+        ret = bnt_eth__get_outer_ethertype(eth, &outer_ethertype);
         if (ret)
             return ret;
         prefix_len = eth->__off + sizeof(struct ethhdr);
         ret = __bnt_shift_insert_4(eth->__ctx, prefix_len);
         if (ret)
             return ret;
-        ret = bnt_eth__set_outer_proto(eth, tpid);
+        ret = bnt_eth__set_outer_ethertype(eth, tpid);
         if (ret)
             return ret;
         vlan.h_vlan_TCI = bpf_htons(tci);
-        vlan.h_vlan_encapsulated_proto = bpf_htons(outer_proto);
+        vlan.h_vlan_encapsulated_proto = bpf_htons(outer_ethertype);
         return __bnt_write(eth->__ctx, prefix_len, &vlan, sizeof(vlan));
     }
 #endif
@@ -1229,7 +1185,7 @@ int __bnt_eth_remove_vlan_g(struct xdp_md *ctx, __u32 off)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
     void *p;
-    __u16 outer_proto;
+    __u16 outer_ethertype;
     __be16 encap;
     __u32 vlan_off;
     int ret;
@@ -1237,8 +1193,8 @@ int __bnt_eth_remove_vlan_g(struct xdp_md *ctx, __u32 off)
     ret = __bnt_data_ptr(ctx, off + offsetof(struct ethhdr, h_proto), sizeof(__be16), &p);
     if (ret)
         return ret;
-    outer_proto = bpf_ntohs(__BNT_PKT_LOAD(*(__be16 *)p));
-    if (outer_proto != ETH_P_8021Q && outer_proto != ETH_P_8021AD)
+    outer_ethertype = bpf_ntohs(__BNT_PKT_LOAD(*(__be16 *)p));
+    if (outer_ethertype != ETH_P_8021Q && outer_ethertype != ETH_P_8021AD)
         return BNT_ERR_BAD_PROTO;
 
     vlan_off = off + sizeof(struct ethhdr);
@@ -1287,13 +1243,13 @@ static __always_inline int bnt_eth__remove_vlan(bnt_eth *eth)
     {
         __be16 encap = 0;
         __u32 vlan_off;
-        __u16 outer_proto;
+        __u16 outer_ethertype;
         int ret;
 
-        ret = bnt_eth__get_outer_proto(eth, &outer_proto);
+        ret = bnt_eth__get_outer_ethertype(eth, &outer_ethertype);
         if (ret)
             return ret;
-        if (outer_proto != ETH_P_8021Q && outer_proto != ETH_P_8021AD)
+        if (outer_ethertype != ETH_P_8021Q && outer_ethertype != ETH_P_8021AD)
             return BNT_ERR_BAD_PROTO;
 
         vlan_off = eth->__off + sizeof(struct ethhdr);
@@ -1303,7 +1259,7 @@ static __always_inline int bnt_eth__remove_vlan(bnt_eth *eth)
         if (ret)
             return ret;
 
-        ret = bnt_eth__set_outer_proto(eth, bpf_ntohs(encap));
+        ret = bnt_eth__set_outer_ethertype(eth, bpf_ntohs(encap));
         if (ret)
             return ret;
 
@@ -1491,8 +1447,7 @@ static __always_inline int bnt_eth__insert_ipv4(bnt_eth *eth,
  * AFTER bpf_xdp_adjust_head must be preceded by a barrier on its derived offset:
  * it forces clang to re-materialize the offset register so the verifier can keep
  * the bounds proof (without it, clang spills/reloads the offset wide across the
- * adjust and the access is rejected with r=0). NB: this relies on compiler codegen
- * and is more clang-version-sensitive than the split version. */
+ * adjust and the access is rejected with r=0). This relies on clang's codegen. */
 __attribute__((noinline, weak, nonnull(1)))
 int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
                              const struct in6_addr *saddr, const struct in6_addr *daddr);
@@ -1965,12 +1920,12 @@ static __always_inline int bnt_ipv6__set_payload_len_no_csum(bnt_ipv6 *ip6, __u1
 
 /** @ingroup bnt_tcp
  *  Sets the TCP source port without updating the checksum. */
-static __always_inline int bnt_tcp__set_source_no_csum(bnt_tcp *tcp, __u16 port)
-    { return __bnt_tcp__set_source_raw(tcp, port); }
+static __always_inline int bnt_tcp__set_sport_no_csum(bnt_tcp *tcp, __u16 port)
+    { return __bnt_tcp__set_sport_raw(tcp, port); }
 /** @ingroup bnt_tcp
  *  Sets the TCP destination port without updating the checksum. */
-static __always_inline int bnt_tcp__set_dest_no_csum(bnt_tcp *tcp, __u16 port)
-    { return __bnt_tcp__set_dest_raw(tcp, port); }
+static __always_inline int bnt_tcp__set_dport_no_csum(bnt_tcp *tcp, __u16 port)
+    { return __bnt_tcp__set_dport_raw(tcp, port); }
 /** @ingroup bnt_tcp
  *  Sets the TCP sequence number without updating the checksum. */
 static __always_inline int bnt_tcp__set_seq_no_csum(bnt_tcp *tcp, __u32 seq)
@@ -1998,12 +1953,12 @@ static __always_inline int bnt_tcp__set_doff_no_csum(bnt_tcp *tcp, __u32 doff)
 
 /** @ingroup bnt_udp
  *  Sets the UDP source port without updating the checksum. */
-static __always_inline int bnt_udp__set_source_no_csum(bnt_udp *udp, __u16 port)
-    { return __bnt_udp__set_source_raw(udp, port); }
+static __always_inline int bnt_udp__set_sport_no_csum(bnt_udp *udp, __u16 port)
+    { return __bnt_udp__set_sport_raw(udp, port); }
 /** @ingroup bnt_udp
  *  Sets the UDP destination port without updating the checksum. */
-static __always_inline int bnt_udp__set_dest_no_csum(bnt_udp *udp, __u16 port)
-    { return __bnt_udp__set_dest_raw(udp, port); }
+static __always_inline int bnt_udp__set_dport_no_csum(bnt_udp *udp, __u16 port)
+    { return __bnt_udp__set_dport_raw(udp, port); }
 /** @ingroup bnt_udp
  *  Sets the UDP length field without updating the checksum. */
 static __always_inline int bnt_udp__set_len_no_csum(bnt_udp *udp, __u16 len)
@@ -2093,8 +2048,8 @@ static __always_inline int bnt_tcp__recompute_csum(bnt_tcp *tcp, bnt_ipv4 *ip4)
 #endif
 }
 #if BNT_XDP_IPV6_CSUM_SUPPORT
-/* XDP IPv6 full recompute is intentionally disabled/commented out: verifier
- * state growth is too costly for this path. TC still exposes recompute_csum6. */
+/* Off by default (BNT_XDP_IPV6_CSUM_SUPPORT): the verifier state grows too much
+ * on this path. TC always exposes recompute_csum6. */
 /**
  * @ingroup bnt_tcp
  * @brief Recomputes the full TCP checksum from scratch over an IPv6 pseudo-header.
@@ -2243,8 +2198,7 @@ struct __bnt_srv6_segs { struct in6_addr s[BNT_SRV6_MAX_SEGS]; };
 /* One-global SRH insert: read + shift + write (IPv6 base + SRH + segments) fused
  * into a single subprogram. Like the IPv6 1G insert, each packet write after
  * bpf_xdp_adjust_head needs a barrier on its derived offset (here: the base/SRH
- * write at `off`, and each segment write at `so`). More clang-version-sensitive
- * than the read|shift|write split. */
+ * write at `off`, and each segment write at `so`). */
 __attribute__((noinline, weak, nonnull(1)))
 int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
                              struct __bnt_srv6_segs *segs, __u8 n_segs);

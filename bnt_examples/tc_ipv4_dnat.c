@@ -39,14 +39,15 @@ int tc_ipv4_dnat(struct __sk_buff *skb)
     __u8 proto;
     __u32 l3_off;
     __u32 l4_off;
-    int is_fragment;
+    bool is_fragment;
     int ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(skb, 0, &eth);
     if (ret)
         return TC_ACT_OK;
 
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return TC_ACT_OK;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -82,11 +83,11 @@ int tc_ipv4_dnat(struct __sk_buff *skb)
         ret = bnt_tcp__parse(skb, l4_off, &tcp);
         if (ret)
             return TC_ACT_OK;
-        ret = bnt_tcp__get_dest(&tcp, &dport);
+        ret = bnt_tcp__get_dport(&tcp, &dport);
         if (ret)
             return TC_ACT_OK;
         if (dport == 443) {
-            ret = bnt_tcp__set_dest(&tcp, 8443);
+            ret = bnt_tcp__set_dport(&tcp, 8443);
             if (ret)
                 return TC_ACT_SHOT;
         }
@@ -94,19 +95,17 @@ int tc_ipv4_dnat(struct __sk_buff *skb)
         ret = bnt_udp__parse(skb, l4_off, &udp);
         if (ret)
             return TC_ACT_OK;
-        ret = bnt_udp__get_dest(&udp, &dport);
+        ret = bnt_udp__get_dport(&udp, &dport);
         if (ret)
             return TC_ACT_OK;
         if (dport == 53) {
-            ret = bnt_udp__set_dest(&udp, 1053);
+            ret = bnt_udp__set_dport(&udp, 1053);
             if (ret)
                 return TC_ACT_SHOT;
         }
     }
 
-    /* Rewriting the L4 port above and the IPv4 address here each fix up
-     * their own slice of the TCP/UDP checksum incrementally; the two updates
-     * compose correctly regardless of which happens first. */
+    /* incremental updates: the port and address rewrites can come in any order */
     ret = bnt_ipv4__set_daddr(&ip4, new_ip);
     if (ret)
         return TC_ACT_SHOT;

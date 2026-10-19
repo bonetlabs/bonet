@@ -35,7 +35,7 @@ int xdp_find_udp_srv6encap(struct xdp_md *ctx)
     ret = bnt_ipv4__next_header(&ip4, &udp);
     if (ret)
         goto fail;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         goto fail;
 

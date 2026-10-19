@@ -17,10 +17,12 @@ int xdp_ipv6_nonfirst_fragment(struct xdp_md *ctx)
     __u32 l3_off;
     __u32 l4_off;
     bool is_fragment = false;
+    __u8 l4_proto;
     int ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
-    if (ret || bnt_eth__get_ethertype(&eth) != ETH_P_IPV6)
+    if (ret || bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IPV6)
         return XDP_PASS;
     ret = bnt_eth__next_off(&eth, &l3_off);
     if (ret)
@@ -28,10 +30,10 @@ int xdp_ipv6_nonfirst_fragment(struct xdp_md *ctx)
     ret = bnt_ipv6__parse(ctx, l3_off, &ip6);
     if (ret)
         goto fail;
-    ret = bnt_ipv6__is_fragmented(&ip6, &is_fragment);
+    ret = bnt_ipv6__is_fragment(&ip6, &is_fragment);
     if (ret || !is_fragment)
         goto fail;
-    if (bnt_ipv6__get_l4_proto(&ip6) != 0)
+    if (bnt_ipv6__get_l4_proto(&ip6, &l4_proto) != BNT_ERR_FRAGMENT || l4_proto != 0)
         goto fail;
 
     ret = bnt_ipv6__next_off(&ip6, &l4_off);

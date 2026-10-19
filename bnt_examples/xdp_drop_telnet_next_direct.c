@@ -42,7 +42,7 @@ int xdp_drop_telnet_syn_next_direct(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    ret = bnt_tcp__get_dest(&tcp, &dport);
+    ret = bnt_tcp__get_dport(&tcp, &dport);
     if (ret)
         return XDP_PASS;
 

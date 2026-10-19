@@ -61,12 +61,12 @@ int tc_service_dnat_e2e(struct __sk_buff *skb)
     if (proto == IPPROTO_TCP) {
         if (bnt_tcp__parse(skb, l4_off, &tcp))
             return TC_ACT_OK;
-        if (bnt_tcp__get_dest(&tcp, &dport))
+        if (bnt_tcp__get_dport(&tcp, &dport))
             return TC_ACT_OK;
     } else if (proto == IPPROTO_UDP) {
         if (bnt_udp__parse(skb, l4_off, &udp))
             return TC_ACT_OK;
-        if (bnt_udp__get_dest(&udp, &dport))
+        if (bnt_udp__get_dport(&udp, &dport))
             return TC_ACT_OK;
     } else {
         return TC_ACT_OK;
@@ -85,11 +85,11 @@ int tc_service_dnat_e2e(struct __sk_buff *skb)
 
     if (proto == IPPROTO_TCP) {
         if (backend->dport != dport &&
-            bnt_tcp__set_dest(&tcp, backend->dport))
+            bnt_tcp__set_dport(&tcp, backend->dport))
             return TC_ACT_SHOT;
     } else if (proto == IPPROTO_UDP) {
         if (backend->dport != dport &&
-            bnt_udp__set_dest(&udp, backend->dport))
+            bnt_udp__set_dport(&udp, backend->dport))
             return TC_ACT_SHOT;
     }
 

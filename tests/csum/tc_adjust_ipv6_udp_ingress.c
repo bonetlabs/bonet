@@ -30,11 +30,14 @@ int tc_adjust_ipv6_udp_ingress(struct __sk_buff *skb)
     __u16 old_udp_len;
     __u32 l3_off, l4_off;
     int   ret;
+    bool  has_frag;
+    __u16 ethertype;
+    __u8 l4_proto;
 
     ret = bnt_eth__parse(skb, 0, &eth);
     if (ret)
         return TC_ACT_OK;
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IPV6)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IPV6)
         return TC_ACT_OK;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -45,10 +48,10 @@ int tc_adjust_ipv6_udp_ingress(struct __sk_buff *skb)
     if (ret)
         return TC_ACT_OK;
 
-    if (bnt_ipv6__has_fragment_hdr(&ip6))
+    if (bnt_ipv6__has_fragment_header(&ip6, &has_frag) || has_frag)
         return TC_ACT_OK;
 
-    if (bnt_ipv6__get_l4_proto(&ip6) != IPPROTO_UDP)
+    if (bnt_ipv6__get_l4_proto(&ip6, &l4_proto) || l4_proto != IPPROTO_UDP)
         return TC_ACT_OK;
 
     ret = bnt_ipv6__next_off(&ip6, &l4_off);
@@ -59,7 +62,7 @@ int tc_adjust_ipv6_udp_ingress(struct __sk_buff *skb)
     if (ret)
         return TC_ACT_OK;
 
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         return TC_ACT_OK;
 
@@ -85,7 +88,7 @@ int tc_adjust_ipv6_udp_ingress(struct __sk_buff *skb)
     }
 
     /* Rewrite destination port for the listener */
-    ret = bnt_udp__set_dest_no_csum(&udp, PORT_TO);
+    ret = bnt_udp__set_dport_no_csum(&udp, PORT_TO);
     if (ret)
         return TC_ACT_SHOT;
 

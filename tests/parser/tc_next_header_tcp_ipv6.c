@@ -29,7 +29,7 @@ int tc_next_header_tcp_ipv6(struct __sk_buff *skb)
     ret = bnt_ipv6__next_header(&ip6, &tcp);
     if (ret)
         return TC_ACT_OK;
-    ret = bnt_tcp__get_dest(&tcp, &dport);
+    ret = bnt_tcp__get_dport(&tcp, &dport);
     if (ret || dport != PORT_FROM) {
         bnt_test_fail(dport, PORT_FROM);
         return TC_ACT_OK;

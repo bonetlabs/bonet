@@ -30,18 +30,18 @@ int xdp_vlan_ipv4_ttl_guard(struct xdp_md *ctx)
     __u8 proto;
     __u32 l3_off;
     int ret;
+    __u16 ethertype;
+    __u8 depth;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
     if (ret)
         return XDP_PASS;
 
-    /* get_vlan_depth() returns 0 both for untagged traffic and on error;
-     * either way this example has nothing to do, so a single check covers
-     * both. */
-    if (bnt_eth__get_vlan_depth(&eth) == 0)
+    /* untagged traffic, or a header that cannot be read: nothing to do */
+    if (bnt_eth__get_vlan_depth(&eth, &depth) || depth == 0)
         return XDP_PASS;
 
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return XDP_PASS;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -65,9 +65,7 @@ int xdp_vlan_ipv4_ttl_guard(struct xdp_md *ctx)
     if (ttl <= 1)
         return XDP_DROP;
 
-    /* Past this point the packet is staying; a write failure here is
-     * unexpected, so it's reported rather than silently passed through. */
-    ret = bnt_ipv4__set_ttl(&ip4, ttl - 1);
+        ret = bnt_ipv4__set_ttl(&ip4, ttl - 1);
     if (ret)
         return XDP_ABORTED;
 

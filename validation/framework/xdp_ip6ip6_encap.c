@@ -27,11 +27,12 @@ int xdp_ip6ip6_encap(struct xdp_md *ctx)
     bnt_eth eth;
     bnt_ipv6 outer;
     bnt_fib6 fib;
+    __u16 ethertype;
 
     if (bnt_eth__parse(ctx, 0, &eth))
         return XDP_PASS;
 
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IPV6)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IPV6)
         return XDP_PASS;
 
     if (bnt_eth__insert_ipv6(&eth, IPPROTO_IPV6, &outer_src, &outer_dst))
@@ -44,8 +45,8 @@ int xdp_ip6ip6_encap(struct xdp_md *ctx)
     if (!bnt_fib6__is_success(&fib))
         return XDP_PASS;
 
-    if (bnt_eth__set_src(&eth, bnt_fib6__get_smac(&fib)) ||
-        bnt_eth__set_dst(&eth, bnt_fib6__get_dmac(&fib)))
+    if (bnt_eth__set_smac(&eth, bnt_fib6__get_smac(&fib)) ||
+        bnt_eth__set_dmac(&eth, bnt_fib6__get_dmac(&fib)))
         return XDP_ABORTED;
 
     return bpf_redirect(bnt_fib6__get_out_ifindex(&fib), 0);

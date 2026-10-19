@@ -22,7 +22,7 @@ int xdp_firewall_static(struct xdp_md *ctx)
         return XDP_PASS;
     if (bnt_ipv4__next_tcp(&ip4, &tcp))
         return XDP_PASS;
-    if (bnt_tcp__get_dest(&tcp, &dport))
+    if (bnt_tcp__get_dport(&tcp, &dport))
         return XDP_PASS;
     if (bnt_tcp__is_syn(&tcp, &syn))
         return XDP_PASS;

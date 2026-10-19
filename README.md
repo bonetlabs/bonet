@@ -24,7 +24,7 @@ int xdp_drop_telnet(struct xdp_md *ctx)
     if (bnt_eth__next_ipv4(&eth, &ip))   return XDP_PASS;   /* not IPv4 */
     if (bnt_ipv4__next_tcp(&ip, &tcp))   return XDP_PASS;   /* not TCP  */
 
-    if (bnt_tcp__get_dest(&tcp, &dport) || bnt_tcp__is_syn(&tcp, &syn))
+    if (bnt_tcp__get_dport(&tcp, &dport) || bnt_tcp__is_syn(&tcp, &syn))
         return XDP_PASS;
     return (dport == 23 && syn) ? XDP_DROP : XDP_PASS;
 }

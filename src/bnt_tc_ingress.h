@@ -265,18 +265,11 @@ static __always_inline int __bnt_l3_csum32(struct __sk_buff *ctx, __u32 off,
     return (int)bpf_l3_csum_replace(ctx, off, from, to, 4);
 }
 
-/*
- * TC packet I/O is entirely via bounds-checking skb helpers (bpf_skb_load_bytes /
- * store_bytes / l4_csum_replace / skb_adjust_room): there is no inline
- * packet-pointer arithmetic at any level, so verification is already
- * context-independent.  The conservative>=2 global encapsulation would only add
- * call overhead with no verifier benefit, so collapse it to level 1 on TC.
- */
-/* TC is always inline (it never uses BPF global sub-programs) and its packet I/O
- * goes through the bounds-checking skb_load/store helpers (+ skb->len) — there is
- * no packet-pointer range tracking, so the inline-hardening barriers gated on
- * BNT_LEGACY_KERNEL have nothing to protect here.  TC therefore loads on pre-5.6
- * kernels without BNT_LEGACY_KERNEL; setting it only adds (harmless) barriers. */
+/* TC is always inline: its packet I/O goes through bounds-checking skb helpers
+ * (bpf_skb_load_bytes/store_bytes, l4_csum_replace, skb_adjust_room), with no
+ * packet-pointer arithmetic, so globals would only add calls. For the same
+ * reason the BNT_LEGACY_KERNEL barriers have nothing to protect: TC loads on
+ * pre-5.6 kernels without it. */
 #ifndef BNT_LEGACY_KERNEL
 #define BNT_LEGACY_KERNEL 0
 #endif
@@ -546,11 +539,11 @@ static __always_inline int bnt_ipv6__set_payload_len_no_csum(bnt_ipv6 *ip6, __u1
     { return __bnt_ipv6__set_payload_len_raw(ip6, payload_len); }
 
 /** Sets the TCP source port WITHOUT updating the checksum (recompute it yourself). */
-static __always_inline int bnt_tcp__set_source_no_csum(bnt_tcp *tcp, __u16 port)
-    { return __bnt_tcp__set_source_raw(tcp, port); }
+static __always_inline int bnt_tcp__set_sport_no_csum(bnt_tcp *tcp, __u16 port)
+    { return __bnt_tcp__set_sport_raw(tcp, port); }
 /** Sets the TCP destination port WITHOUT updating the checksum (recompute it yourself). */
-static __always_inline int bnt_tcp__set_dest_no_csum(bnt_tcp *tcp, __u16 port)
-    { return __bnt_tcp__set_dest_raw(tcp, port); }
+static __always_inline int bnt_tcp__set_dport_no_csum(bnt_tcp *tcp, __u16 port)
+    { return __bnt_tcp__set_dport_raw(tcp, port); }
 /** Sets the TCP sequence number WITHOUT updating the checksum (recompute it yourself). */
 static __always_inline int bnt_tcp__set_seq_no_csum(bnt_tcp *tcp, __u32 seq)
     { return __bnt_tcp__set_seq_raw(tcp, seq); }
@@ -571,11 +564,11 @@ static __always_inline int bnt_tcp__set_doff_no_csum(bnt_tcp *tcp, __u32 doff)
     { return __bnt_tcp__set_doff_raw(tcp, doff); }
 
 /** Sets the UDP source port WITHOUT updating the checksum (recompute it yourself). */
-static __always_inline int bnt_udp__set_source_no_csum(bnt_udp *udp, __u16 port)
-    { return __bnt_udp__set_source_raw(udp, port); }
+static __always_inline int bnt_udp__set_sport_no_csum(bnt_udp *udp, __u16 port)
+    { return __bnt_udp__set_sport_raw(udp, port); }
 /** Sets the UDP destination port WITHOUT updating the checksum (recompute it yourself). */
-static __always_inline int bnt_udp__set_dest_no_csum(bnt_udp *udp, __u16 port)
-    { return __bnt_udp__set_dest_raw(udp, port); }
+static __always_inline int bnt_udp__set_dport_no_csum(bnt_udp *udp, __u16 port)
+    { return __bnt_udp__set_dport_raw(udp, port); }
 /** Sets the UDP length field WITHOUT updating the checksum (recompute it yourself). */
 static __always_inline int bnt_udp__set_len_no_csum(bnt_udp *udp, __u16 len)
     { return __bnt_udp__set_len_raw(udp, len); }

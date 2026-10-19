@@ -265,18 +265,11 @@ static __always_inline int __bnt_l3_csum32(struct __sk_buff *ctx, __u32 off,
     return (int)bpf_l3_csum_replace(ctx, off, from, to, 4);
 }
 
-/*
- * TC packet I/O is entirely via bounds-checking skb helpers (bpf_skb_load_bytes /
- * store_bytes / l4_csum_replace / skb_adjust_room): there is no inline
- * packet-pointer arithmetic at any level, so verification is already
- * context-independent.  The conservative>=2 global encapsulation would only add
- * call overhead with no verifier benefit, so collapse it to level 1 on TC.
- */
-/* TC is always inline (it never uses BPF global sub-programs) and its packet I/O
- * goes through the bounds-checking skb_load/store helpers (+ skb->len) — there is
- * no packet-pointer range tracking, so the inline-hardening barriers gated on
- * BNT_LEGACY_KERNEL have nothing to protect here.  TC therefore loads on pre-5.6
- * kernels without BNT_LEGACY_KERNEL; setting it only adds (harmless) barriers. */
+/* TC is always inline: its packet I/O goes through bounds-checking skb helpers
+ * (bpf_skb_load_bytes/store_bytes, l4_csum_replace, skb_adjust_room), with no
+ * packet-pointer arithmetic, so globals would only add calls. For the same
+ * reason the BNT_LEGACY_KERNEL barriers have nothing to protect: TC loads on
+ * pre-5.6 kernels without it. */
 #ifndef BNT_LEGACY_KERNEL
 #define BNT_LEGACY_KERNEL 0
 #endif

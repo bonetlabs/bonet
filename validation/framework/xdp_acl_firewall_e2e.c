@@ -52,7 +52,7 @@ int xdp_acl_firewall_e2e(struct xdp_md *ctx)
 
     if (!bnt_eth__next_ipv4(&eth, &ip4)) {
         if (!bnt_ipv4__next_tcp(&ip4, &tcp)) {
-            if (bnt_tcp__get_dest(&tcp, &dport))
+            if (bnt_tcp__get_dport(&tcp, &dport))
                 return XDP_PASS;
             key.l4_proto = IPPROTO_TCP;
             key.dport = dport;
@@ -60,7 +60,7 @@ int xdp_acl_firewall_e2e(struct xdp_md *ctx)
         }
 
         if (!bnt_ipv4__next_udp(&ip4, &udp)) {
-            if (bnt_udp__get_dest(&udp, &dport))
+            if (bnt_udp__get_dport(&udp, &dport))
                 return XDP_PASS;
             key.l4_proto = IPPROTO_UDP;
             key.dport = dport;
@@ -72,7 +72,7 @@ int xdp_acl_firewall_e2e(struct xdp_md *ctx)
 
     if (!bnt_eth__next_ipv6(&eth, &ip6)) {
         if (!bnt_ipv6__next_tcp(&ip6, &tcp)) {
-            if (bnt_tcp__get_dest(&tcp, &dport))
+            if (bnt_tcp__get_dport(&tcp, &dport))
                 return XDP_PASS;
             key.l4_proto = IPPROTO_TCP;
             key.dport = dport;
@@ -80,7 +80,7 @@ int xdp_acl_firewall_e2e(struct xdp_md *ctx)
         }
 
         if (!bnt_ipv6__next_udp(&ip6, &udp)) {
-            if (bnt_udp__get_dest(&udp, &dport))
+            if (bnt_udp__get_dport(&udp, &dport))
                 return XDP_PASS;
             key.l4_proto = IPPROTO_UDP;
             key.dport = dport;

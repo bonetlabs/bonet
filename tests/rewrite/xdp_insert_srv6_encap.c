@@ -31,7 +31,7 @@ int xdp_insert_srv6_encap(struct xdp_md *ctx)
     ret = bnt_ctx__find_udp(ctx, &udp);
     if (ret)
         return XDP_PASS;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         return XDP_PASS;
 
@@ -39,7 +39,7 @@ int xdp_insert_srv6_encap(struct xdp_md *ctx)
     ret = bnt_eth__parse(ctx, 0, &eth);
     if (ret)
         goto fail;
-    inner_ethertype = bnt_eth__get_ethertype(&eth);
+    bnt_eth__get_ethertype(&eth, &inner_ethertype);
     if (inner_ethertype == ETH_P_IP)
         inner_nexthdr = IPPROTO_IPIP;
     else if (inner_ethertype == ETH_P_IPV6)
@@ -73,7 +73,7 @@ int xdp_insert_srv6_encap(struct xdp_md *ctx)
         if (ret)
             goto fail;
     }
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         goto fail;
 

@@ -225,7 +225,7 @@ class CFunctionSpan:
 # ---------------------------------------------------------------------------
 
 def read_text(path: Path) -> str:
-    """Read a text file in a robust way."""
+    """Read a text file as UTF-8, replacing undecodable bytes."""
     return path.read_text(encoding="utf-8", errors="replace")
 
 
@@ -513,7 +513,7 @@ def filter_grouped_paths(grouped: Mapping[str, List[Path]], names: Sequence[str]
 def strip_comments_preserve_strings(code: str) -> str:
     """
     Remove C/C++ comments while preserving strings/chars enough for regex-based
-    source metrics. This is not a C parser; it is deliberately conservative.
+    source metrics. This is not a C parser.
     """
     out: List[str] = []
     i = 0
@@ -578,7 +578,7 @@ def mask_string_and_char_literals(code: str) -> str:
     """
     Replace string/char literal contents with spaces while preserving layout.
 
-    The cognitive-complexity pass is deliberately lexical: preserving positions
+    The cognitive-complexity pass is lexical: preserving positions
     keeps line numbers stable, while masking literal contents avoids counting
     words or braces inside format strings.
     """
@@ -1249,7 +1249,7 @@ def parse_line_counter_xml(text: str) -> Dict[str, Any]:
 
 
 def parse_line_counter_text(text: str) -> Dict[str, Any]:
-    """Parse human-readable output from line counters using robust regexes."""
+    """Parse the text output of line counters."""
     metrics: Dict[str, float] = {}
     patterns = {
         "files": r"(?i)\b(?:files?|nfiles|file count)\b\D+(\d+(?:\.\d+)?)",
@@ -1784,7 +1784,7 @@ def build_side_inventory(
     resolved_source_paths = [p.resolve() for p in source_paths]
 
     # If explicit artifact paths are not provided, look next to the sources so
-    # users can simply run make in each test directory and then point here.
+    # users can run make in each test directory and then point here.
     object_inputs = list(object_paths) if object_paths else list(source_paths)
     object_files = collect_artifact_files(object_inputs, [".o"], exclude_dirs, exclude_regexes)
     verifier_log_inputs = list(verifier_log_paths) if verifier_log_paths else list(source_paths)

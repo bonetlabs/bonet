@@ -31,13 +31,14 @@ int xdp_adjust_ipv4_udp_ingress(struct xdp_md *ctx)
     __u16 old_total_len;
     __u16 old_udp_len;
     __u32 l3_off, l4_off;
-    int   is_fragment;
+    bool  is_fragment;
     int   ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
     if (ret)
         return XDP_PASS;
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return XDP_PASS;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -64,7 +65,7 @@ int xdp_adjust_ipv4_udp_ingress(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         return XDP_PASS;
 
@@ -90,7 +91,7 @@ int xdp_adjust_ipv4_udp_ingress(struct xdp_md *ctx)
     }
 
     /* Rewrite destination port for the listener */
-    ret = bnt_udp__set_dest_no_csum(&udp, PORT_TO);
+    ret = bnt_udp__set_dport_no_csum(&udp, PORT_TO);
     if (ret)
         return XDP_ABORTED;
 

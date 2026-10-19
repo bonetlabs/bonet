@@ -21,9 +21,11 @@ int xdp_ipv6_fragment(struct xdp_md *ctx)
     bool has_fragment = false;
     bool is_fragment = false;
     int ret;
+    __u16 ethertype;
+    __u8 l4_proto;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
-    if (ret || bnt_eth__get_ethertype(&eth) != ETH_P_IPV6)
+    if (ret || bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IPV6)
         return XDP_PASS;
     ret = bnt_eth__next_off(&eth, &l3_off);
     if (ret)
@@ -34,16 +36,16 @@ int xdp_ipv6_fragment(struct xdp_md *ctx)
     ret = bnt_ipv6__has_fragment_header(&ip6, &has_fragment);
     if (ret || !has_fragment)
         goto fail;
-    ret = bnt_ipv6__is_fragmented(&ip6, &is_fragment);
+    ret = bnt_ipv6__is_fragment(&ip6, &is_fragment);
     if (ret || !is_fragment)
         goto fail;
-    if (bnt_ipv6__get_l4_proto(&ip6) != IPPROTO_UDP)
+    if (bnt_ipv6__get_l4_proto(&ip6, &l4_proto) || l4_proto != IPPROTO_UDP)
         goto fail;
 
     ret = bnt_ipv6__next_udp(&ip6, &udp);
     if (ret)
         goto fail;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         goto fail;
 

@@ -50,7 +50,7 @@ struct bnt_dbg_eth_event {
     struct bnt_dbg_event_meta meta;
     unsigned char dst[BNT_DBG_MAC_LEN];
     unsigned char src[BNT_DBG_MAC_LEN];
-    __u16 outer_proto;
+    __u16 outer_ethertype;
     __u16 ethertype;
     __u8 vlan_depth;
     __u8 _pad[3];
@@ -224,7 +224,7 @@ static __always_inline int __bnt_dbg_eth__fill_impl(const bnt_eth *eth,
                                                     struct bnt_dbg_eth_event *event)
 {
     struct __bnt_eth_meta meta;
-    __u16 outer_proto;
+    __u16 outer_ethertype;
     __u32 i;
     int ret;
 
@@ -241,17 +241,17 @@ static __always_inline int __bnt_dbg_eth__fill_impl(const bnt_eth *eth,
     __builtin_memset(event, 0, sizeof(*event));
     __bnt_dbg_init_meta(&event->meta, eth->__off, meta.hlen, __bnt_len(eth->__ctx));
 
-    ret = bnt_eth__get_dst(eth, event->dst);
+    ret = bnt_eth__get_dmac(eth, event->dst);
     if (ret)
         return ret;
-    ret = bnt_eth__get_src(eth, event->src);
+    ret = bnt_eth__get_smac(eth, event->src);
     if (ret)
         return ret;
-    ret = bnt_eth__get_outer_proto(eth, &outer_proto);
+    ret = bnt_eth__get_outer_ethertype(eth, &outer_ethertype);
     if (ret)
         return ret;
 
-    event->outer_proto = outer_proto;
+    event->outer_ethertype = outer_ethertype;
     event->ethertype = meta.proto;
     event->vlan_depth = meta.vlan_depth;
 
@@ -371,7 +371,7 @@ static __always_inline int __bnt_dbg_ipv4__fill_impl(const bnt_ipv4 *ip4,
     __u16 total_len, id, frag_off, check;
     __u8 version, ihl, tos, ttl, protocol;
     __u32 next_off;
-    int is_fragment;
+    bool is_fragment;
     int ret;
 
     if (!event)
@@ -503,8 +503,8 @@ static __always_inline int __bnt_dbg_tcp__fill_impl(const bnt_tcp *tcp,
     if ((ret = __bnt_tcp_hlen(tcp, &hlen)))           return ret;
     if ((ret = bnt_tcp__get_seq(tcp, &seq)))          return ret;
     if ((ret = bnt_tcp__get_ack_seq(tcp, &ack_seq)))  return ret;
-    if ((ret = bnt_tcp__get_source(tcp, &source)))    return ret;
-    if ((ret = bnt_tcp__get_dest(tcp, &dest)))        return ret;
+    if ((ret = bnt_tcp__get_sport(tcp, &source)))    return ret;
+    if ((ret = bnt_tcp__get_dport(tcp, &dest)))        return ret;
     if ((ret = bnt_tcp__get_flags(tcp, &flags)))      return ret;
     if ((ret = bnt_tcp__get_window(tcp, &window)))    return ret;
     if ((ret = bnt_tcp__get_check(tcp, &check)))      return ret;
@@ -550,8 +550,8 @@ static __always_inline int __bnt_dbg_udp__fill_impl(const bnt_udp *udp,
     if (!udp)
         return BNT_ERR_BAD_ARG;
 
-    if ((ret = bnt_udp__get_source(udp, &source))) return ret;
-    if ((ret = bnt_udp__get_dest(udp, &dest)))     return ret;
+    if ((ret = bnt_udp__get_sport(udp, &source))) return ret;
+    if ((ret = bnt_udp__get_dport(udp, &dest)))     return ret;
     if ((ret = bnt_udp__get_len(udp, &len)))       return ret;
     if ((ret = bnt_udp__get_check(udp, &check)))   return ret;
 
@@ -789,7 +789,7 @@ static __always_inline int bnt_dbg_eth_event__printk(const struct bnt_dbg_eth_ev
                event->meta.offset, event->meta.header_len, event->meta.packet_len,
                __bnt_dbg_mac_hi(event->dst), __bnt_dbg_mac_lo(event->dst),
                __bnt_dbg_mac_hi(event->src), __bnt_dbg_mac_lo(event->src),
-               event->outer_proto, event->ethertype, event->vlan_depth,
+               event->outer_ethertype, event->ethertype, event->vlan_depth,
                tci0, tci1);
     return BNT_OK;
 }

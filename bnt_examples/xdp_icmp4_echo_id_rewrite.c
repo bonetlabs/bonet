@@ -32,14 +32,15 @@ int xdp_icmp4_echo_id_rewrite(struct xdp_md *ctx)
     __u8 proto;
     __u32 l3_off;
     __u32 l4_off;
-    int is_fragment;
+    bool is_fragment;
     int ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
     if (ret)
         return XDP_PASS;
 
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return XDP_PASS;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -70,15 +71,11 @@ int xdp_icmp4_echo_id_rewrite(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    /* The echo identifier field only exists in Echo Request/Reply messages;
-     * the type check above isn't just policy, it's what makes this field
-     * meaningful at all. */
+    /* the echo identifier exists only in Echo Request/Reply */
     if (type != ICMP_ECHO)
         return XDP_PASS;
 
-    /* Unlike the TCP/UDP rewrites elsewhere in this directory, no IPv4 view
-     * is needed here: ICMPv4 has no pseudo-header, so its checksum covers
-     * only the ICMP message itself. */
+    /* ICMPv4 has no pseudo-header, so no IPv4 view is needed */
     ret = bnt_icmp4__set_echo_id(&icmp4, 0x1234);
     if (ret)
         return XDP_ABORTED;

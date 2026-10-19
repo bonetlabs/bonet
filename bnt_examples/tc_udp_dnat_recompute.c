@@ -14,7 +14,7 @@
  * Example 9: TC UDP DNAT with full checksum recompute.
  *
  * Validation goal:
- *   - validates bnt_ipv4__set_daddr_no_csum() and bnt_udp__set_dest_no_csum()
+ *   - validates bnt_ipv4__set_daddr_no_csum() and bnt_udp__set_dport_no_csum()
  *   - validates bnt_ipv4__recompute_csum() on the TC (skb) backend
  *   - validates bnt_udp__recompute_csum() (full UDP checksum with payload loop)
  *   - exercises the BPF verifier with the BNT_MAX_PAYLOAD iteration bound on TC
@@ -40,14 +40,15 @@ int tc_udp_dnat_recompute(struct __sk_buff *skb)
     __u8   proto;
     __u32  l3_off;
     __u32  l4_off;
-    int    is_fragment;
+    bool   is_fragment;
     int    ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(skb, 0, &eth);
     if (ret)
         return TC_ACT_OK;
 
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return TC_ACT_OK;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -81,22 +82,19 @@ int tc_udp_dnat_recompute(struct __sk_buff *skb)
     if (ret)
         return TC_ACT_OK;
 
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret)
         return TC_ACT_OK;
 
     if (dport != 5353)
         return TC_ACT_OK;
 
-    /* Unlike tc_ipv4_dnat.c, which uses the ordinary set_daddr()/set_dest()
-     * and lets each call fix up its own slice of the checksum, this example
-     * deliberately defers all checksum work to the recompute calls below —
-     * worthwhile only when several fields change at once. */
+    /* no checksum update here: the recompute below rebuilds it */
     ret = bnt_ipv4__set_daddr_no_csum(&ip4, rewrite_ip);
     if (ret)
         return TC_ACT_SHOT;
 
-    ret = bnt_udp__set_dest_no_csum(&udp, 53);
+    ret = bnt_udp__set_dport_no_csum(&udp, 53);
     if (ret)
         return TC_ACT_SHOT;
 

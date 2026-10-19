@@ -27,11 +27,11 @@ int tc_tcp_field_setters_ipv4(struct __sk_buff *skb)
     ret = bnt_ctx__find_tcp(skb, &tcp);
     if (ret)
         return TC_ACT_OK;
-    ret = bnt_tcp__get_dest(&tcp, &dport);
+    ret = bnt_tcp__get_dport(&tcp, &dport);
     if (ret || dport != PORT_FROM)
         return TC_ACT_OK;
 
-    ret = bnt_tcp__set_source(&tcp, 4444);
+    ret = bnt_tcp__set_sport(&tcp, 4444);
     if (ret)
         goto fail;
     ret = bnt_tcp__set_seq(&tcp, 0x01020304);
@@ -62,7 +62,7 @@ int tc_tcp_field_setters_ipv4(struct __sk_buff *skb)
     if (ret)
         goto fail;
 
-    ret = bnt_tcp__get_source(&tcp, &sport);
+    ret = bnt_tcp__get_sport(&tcp, &sport);
     if (ret)
         goto fail;
     ret = bnt_tcp__get_seq(&tcp, &seq);

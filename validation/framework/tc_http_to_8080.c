@@ -31,10 +31,10 @@ int tc_http_to_8080(struct __sk_buff *skb)
         return TC_ACT_OK;
     }
 
-    if (bnt_tcp__get_dest(&tcp, &dport) || dport != 80)
+    if (bnt_tcp__get_dport(&tcp, &dport) || dport != 80)
         return TC_ACT_OK;
 
-    if (bnt_tcp__set_dest(&tcp, 8080))
+    if (bnt_tcp__set_dport(&tcp, 8080))
         return TC_ACT_SHOT;
 
     return TC_ACT_OK;

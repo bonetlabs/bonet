@@ -31,27 +31,22 @@ int xdp_fib4_forward(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    /* fib_lookup() returning BNT_OK only means the lookup ran; is_success()
-     * is the separate check for whether it actually found a route. Checked
-     * before touching the TTL so an unroutable packet is passed unchanged
-     * rather than decremented for nothing. */
+    /* BNT_OK means the lookup ran; is_success() means it found a route */
     ret = bnt_ipv4__fib_lookup(&ip4, &fib);
     if (ret)
         return XDP_PASS;
     if (!bnt_fib4__is_success(&fib))
         return XDP_PASS;
 
-    /* dec_ttl() overloads its return: non-zero means either "TTL expired"
-     * (ttl_expired set, an expected outcome to drop on) or a real failure
-     * (ttl_expired clear). The ternary distinguishes the two. */
+    /* on failure, ttl_expired tells an expired TTL from an error */
     ret = bnt_ipv4__dec_ttl(&ip4, &ttl_expired);
     if (ret)
         return ttl_expired ? XDP_DROP : XDP_ABORTED;
 
-    ret = bnt_eth__set_src(&eth, bnt_fib4__get_smac(&fib));
+    ret = bnt_eth__set_smac(&eth, bnt_fib4__get_smac(&fib));
     if (ret)
         return XDP_ABORTED;
-    ret = bnt_eth__set_dst(&eth, bnt_fib4__get_dmac(&fib));
+    ret = bnt_eth__set_dmac(&eth, bnt_fib4__get_dmac(&fib));
     if (ret)
         return XDP_ABORTED;
 

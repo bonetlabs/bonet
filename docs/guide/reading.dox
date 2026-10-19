@@ -39,7 +39,7 @@ on-wire form rather than used as numbers:
 __u16  dport;
 __be32 saddr;
 
-bnt_tcp__get_dest(&tcp, &dport);    /* host order:    dport == 23                */
+bnt_tcp__get_dport(&tcp, &dport);    /* host order:    dport == 23                */
 bnt_ipv4__get_saddr(&ip, &saddr);   /* network order: saddr == bpf_htonl(0x0A000001) */
 @endcode
 */

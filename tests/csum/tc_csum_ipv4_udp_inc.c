@@ -29,13 +29,14 @@ int tc_csum_ipv4_udp_inc(struct __sk_buff *skb)
     __u8  proto;
     __u16 dport;
     __u32 l3_off, l4_off;
-    int   is_fragment;
+    bool  is_fragment;
     int   ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(skb, 0, &eth);
     if (ret)
         return TC_ACT_OK;
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return TC_ACT_OK;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -62,7 +63,7 @@ int tc_csum_ipv4_udp_inc(struct __sk_buff *skb)
     if (ret)
         return TC_ACT_OK;
 
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         return TC_ACT_OK;
 
@@ -72,7 +73,7 @@ int tc_csum_ipv4_udp_inc(struct __sk_buff *skb)
         return TC_ACT_SHOT;
 
     /* Incremental: port change updates UDP checksum */
-    ret = bnt_udp__set_dest(&udp, PORT_TO);
+    ret = bnt_udp__set_dport(&udp, PORT_TO);
     if (ret)
         return TC_ACT_SHOT;
 

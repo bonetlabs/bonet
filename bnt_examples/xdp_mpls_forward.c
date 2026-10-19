@@ -56,9 +56,6 @@ int xdp_mpls_forward(struct xdp_md *ctx)
     if (ret)
         return XDP_ABORTED;
 
-    /* Unlike the VLAN tag count or IPv6 extension headers, the label stack
-     * has no library-imposed depth bound; the caller picks and enforces its
-     * own, here a small constant for #pragma unroll. */
     ret = bnt_mpls__is_bos(&label, &bos);
     if (ret)
         return XDP_ABORTED;
@@ -75,8 +72,7 @@ int xdp_mpls_forward(struct xdp_md *ctx)
         if (ret)
             return XDP_ABORTED;
     }
-    /* A stack deeper than MPLS_MAX_WALK is this program's own scope limit,
-     * not a malformed packet; pass it on rather than treat it as an error. */
+    /* deeper than MPLS_MAX_WALK: not handled here */
     if (!bos)
         return XDP_PASS;
 

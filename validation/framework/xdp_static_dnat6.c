@@ -48,8 +48,8 @@ int xdp_static_dnat6(struct xdp_md *ctx)
 
     if (bnt_ipv6__dec_hop_limit(&ip6, &hop_limit_expired))
         return hop_limit_expired ? XDP_DROP : XDP_ABORTED;
-    if (bnt_eth__set_src(&eth, bnt_fib6__get_smac(&fib)) ||
-        bnt_eth__set_dst(&eth, bnt_fib6__get_dmac(&fib)))
+    if (bnt_eth__set_smac(&eth, bnt_fib6__get_smac(&fib)) ||
+        bnt_eth__set_dmac(&eth, bnt_fib6__get_dmac(&fib)))
         return XDP_ABORTED;
 
     return bpf_redirect(bnt_fib6__get_out_ifindex(&fib), 0);

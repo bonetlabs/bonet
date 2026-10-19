@@ -30,8 +30,8 @@ int tc_ipip_encap(struct __sk_buff *ctx)
     if (!bnt_fib4__is_success(&fib))
         return TC_ACT_OK;
 
-    if (bnt_eth__set_src(&eth, bnt_fib4__get_smac(&fib)) ||
-        bnt_eth__set_dst(&eth, bnt_fib4__get_dmac(&fib)))
+    if (bnt_eth__set_smac(&eth, bnt_fib4__get_smac(&fib)) ||
+        bnt_eth__set_dmac(&eth, bnt_fib4__get_dmac(&fib)))
         return TC_ACT_SHOT;
 
     return bpf_redirect(bnt_fib4__get_out_ifindex(&fib), 0);

@@ -40,12 +40,14 @@ int xdp_arp_responder(struct xdp_md *ctx)
     __u16 oper;
     __u32 l3_off;
     int ret;
+    bool eth_ipv4;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
     if (ret)
         return XDP_PASS;
 
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_ARP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_ARP)
         return XDP_PASS;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -56,10 +58,8 @@ int xdp_arp_responder(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    /* ARP isn't Ethernet/IPv4-specific on the wire; this guard rejects other
-     * hardware/protocol address sizes before the SHA/SPA/THA/TPA accessors
-     * below, which assume Ethernet MACs and IPv4 addresses. */
-    if (!bnt_arp__is_eth_ipv4(&arp))
+    /* the SHA/SPA/THA/TPA accessors below assume Ethernet and IPv4 */
+    if (bnt_arp__is_eth_ipv4(&arp, &eth_ipv4) || !eth_ipv4)
         return XDP_PASS;
 
     ret = bnt_arp__get_oper(&arp, &oper);
@@ -76,11 +76,8 @@ int xdp_arp_responder(struct xdp_md *ctx)
     if (target_ip != service_ip)
         return XDP_PASS;
 
-    /* Capture the requester's MAC/IP before any field below is overwritten:
-     * the reply's destination fields are the request's source fields, so
-     * this packet is turned into its own reply in place rather than built
-     * from scratch. */
-    ret = bnt_eth__get_src(&eth, requester_mac);
+    /* the reply is written over the request: save the requester's MAC/IP first */
+    ret = bnt_eth__get_smac(&eth, requester_mac);
     if (ret)
         return XDP_PASS;
 
@@ -88,11 +85,11 @@ int xdp_arp_responder(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    ret = bnt_eth__set_dst(&eth, requester_mac);
+    ret = bnt_eth__set_dmac(&eth, requester_mac);
     if (ret)
         return XDP_ABORTED;
 
-    ret = bnt_eth__set_src(&eth, service_mac);
+    ret = bnt_eth__set_smac(&eth, service_mac);
     if (ret)
         return XDP_ABORTED;
 
@@ -116,9 +113,7 @@ int xdp_arp_responder(struct xdp_md *ctx)
     if (ret)
         return XDP_ABORTED;
 
-    /* XDP_TX sends the now-rewritten frame back out the interface it
-     * arrived on, instead of up the stack (XDP_PASS) or out a different
-     * interface (bpf_redirect()). */
+    /* back out the interface it came in on */
     return XDP_TX;
 }
 

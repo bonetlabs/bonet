@@ -23,22 +23,23 @@ int xdp_arp_responder(struct xdp_md *ctx)
     __be32 requester_ip;
     __be32 target_ip;
     __u16 oper;
+    bool  eth_ipv4;
 
     if (bnt_eth__parse(ctx, 0, &eth))
         return XDP_PASS;
     if (bnt_eth__next_arp(&eth, &arp))
         return XDP_PASS;
-    if (!bnt_arp__is_eth_ipv4(&arp))
+    if (bnt_arp__is_eth_ipv4(&arp, &eth_ipv4) || !eth_ipv4)
         return XDP_PASS;
     if (bnt_arp__get_oper(&arp, &oper) || oper != ARPOP_REQUEST)
         return XDP_PASS;
     if (bnt_arp__get_tpa(&arp, &target_ip) || target_ip != service_ip)
         return XDP_PASS;
-    if (bnt_eth__get_src(&eth, requester_mac) || bnt_arp__get_spa(&arp, &requester_ip))
+    if (bnt_eth__get_smac(&eth, requester_mac) || bnt_arp__get_spa(&arp, &requester_ip))
         return XDP_PASS;
 
-    if (bnt_eth__set_dst(&eth, requester_mac) ||
-        bnt_eth__set_src(&eth, service_mac) ||
+    if (bnt_eth__set_dmac(&eth, requester_mac) ||
+        bnt_eth__set_smac(&eth, service_mac) ||
         bnt_arp__set_oper(&arp, ARPOP_REPLY) ||
         bnt_arp__set_tha(&arp, requester_mac) ||
         bnt_arp__set_tpa(&arp, requester_ip) ||

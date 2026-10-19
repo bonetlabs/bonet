@@ -29,7 +29,7 @@ int tc_ipv4_udp_saddr_inc(struct __sk_buff *skb)
     ret = bnt_ctx__find_udp(skb, &udp);
     if (ret)
         return TC_ACT_OK;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         return TC_ACT_OK;
 
@@ -39,9 +39,9 @@ int tc_ipv4_udp_saddr_inc(struct __sk_buff *skb)
         bnt_test_fail_detail((__u64)(unsigned int)ret, PORT_TO, 1, 0, 0);
         return TC_ACT_SHOT;
     }
-    ret = bnt_udp__set_dest(&udp, PORT_TO);
+    ret = bnt_udp__set_dport(&udp, PORT_TO);
     if (ret) {
-        /* d[0]=2: set_dest failed; seen=error code */
+        /* d[0]=2: set_dport failed; seen=error code */
         bnt_test_fail_detail((__u64)(unsigned int)ret, PORT_TO, 2, 0, 0);
         return TC_ACT_SHOT;
     }
@@ -51,9 +51,9 @@ int tc_ipv4_udp_saddr_inc(struct __sk_buff *skb)
         bnt_test_fail_detail((__u64)(unsigned int)ret, PORT_TO, 3, 0, 0);
         return TC_ACT_SHOT;
     }
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret) {
-        /* d[0]=4: get_dest failed; seen=error code */
+        /* d[0]=4: get_dport failed; seen=error code */
         bnt_test_fail_detail((__u64)(unsigned int)ret, PORT_TO, 4, 0, 0);
         return TC_ACT_SHOT;
     }

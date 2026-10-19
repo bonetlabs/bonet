@@ -30,12 +30,15 @@ int xdp_drop_icmp6_echo(struct xdp_md *ctx)
     __u32 l3_off;
     __u32 l4_off;
     int ret;
+    bool has_frag;
+    __u16 ethertype;
+    __u8 l4_proto;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
     if (ret)
         return XDP_PASS;
 
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IPV6)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IPV6)
         return XDP_PASS;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -46,15 +49,13 @@ int xdp_drop_icmp6_echo(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    /* Conservative on purpose: skips every fragment, including the first
-     * (which does carry the ICMPv6 header), to keep this example simple
-     * rather than reassembling to inspect fragmented Echo Requests. */
-    if (bnt_ipv6__has_fragment_hdr(&ip6))
+    /* every fragment passes, the first too (it carries the ICMPv6 header) */
+    if (bnt_ipv6__has_fragment_header(&ip6, &has_frag) || has_frag)
         return XDP_PASS;
 
     /* get_l4_proto() is the protocol past any extension headers, not the
      * IPv6 header's own next-header field. */
-    if (bnt_ipv6__get_l4_proto(&ip6) != IPPROTO_ICMPV6)
+    if (bnt_ipv6__get_l4_proto(&ip6, &l4_proto) || l4_proto != IPPROTO_ICMPV6)
         return XDP_PASS;
 
     ret = bnt_ipv6__next_off(&ip6, &l4_off);

@@ -35,15 +35,15 @@ int tc_ipv4_dnat(struct __sk_buff *skb)
 
     if (proto == IPPROTO_TCP) {
         bnt_tcp__parse(skb, l4_off, &tcp);
-        if (bnt_tcp__get_dest(&tcp, &dport))
+        if (bnt_tcp__get_dport(&tcp, &dport))
             return TC_ACT_OK;
-        if (dport == 443 && bnt_tcp__set_dest(&tcp, 8443))
+        if (dport == 443 && bnt_tcp__set_dport(&tcp, 8443))
             return TC_ACT_SHOT;
     } else if (proto == IPPROTO_UDP) {
         bnt_udp__parse(skb, l4_off, &udp);
-        if (bnt_udp__get_dest(&udp, &dport))
+        if (bnt_udp__get_dport(&udp, &dport))
             return TC_ACT_OK;
-        if (dport == 53 && bnt_udp__set_dest(&udp, 1053))
+        if (dport == 53 && bnt_udp__set_dport(&udp, 1053))
             return TC_ACT_SHOT;
     }
 

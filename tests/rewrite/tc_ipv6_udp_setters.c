@@ -22,16 +22,17 @@ int tc_ipv6_udp_setters(struct __sk_buff *skb)
     __u8 tc = 0;
     __u8 hop = 0;
     int ret;
+    __u8 l4_proto;
 
     ret = bnt_ctx__find_ipv6(skb, &ip6);
     if (ret)
         return TC_ACT_OK;
-    if (bnt_ipv6__get_l4_proto(&ip6) != IPPROTO_UDP)
+    if (bnt_ipv6__get_l4_proto(&ip6, &l4_proto) || l4_proto != IPPROTO_UDP)
         return TC_ACT_OK;
     ret = bnt_ctx__find_udp(skb, &udp);
     if (ret)
         return TC_ACT_OK;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         return TC_ACT_OK;
     ret = bnt_ipv6__get_payload_len(&ip6, &payload_len);
@@ -53,7 +54,7 @@ int tc_ipv6_udp_setters(struct __sk_buff *skb)
     ret = bnt_ipv6__set_payload_len(&ip6, payload_len);
     if (ret)
         goto fail;
-    ret = bnt_udp__set_dest(&udp, PORT_TO);
+    ret = bnt_udp__set_dport(&udp, PORT_TO);
     if (ret)
         goto fail;
 
@@ -66,7 +67,7 @@ int tc_ipv6_udp_setters(struct __sk_buff *skb)
     ret = bnt_ipv6__get_hop_limit(&ip6, &hop);
     if (ret)
         goto fail;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret)
         goto fail;
     if (tc != 0x5a || flow != 0xabcde || hop != 55 || dport != PORT_TO)

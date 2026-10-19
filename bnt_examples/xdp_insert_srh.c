@@ -28,6 +28,8 @@ int xdp_insert_srh(struct xdp_md *ctx)
     __u32 l3_off;
     __u32 l4_off;
     int ret;
+    __u16 ethertype;
+    __u8 l4_proto;
 
     /* Segments in forward visitation order: the packet reaches segs[0]
      * first, then segs[1]. */
@@ -42,7 +44,7 @@ int xdp_insert_srh(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IPV6)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IPV6)
         return XDP_PASS;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -53,7 +55,7 @@ int xdp_insert_srh(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    if (bnt_ipv6__get_l4_proto(&ip6) != IPPROTO_UDP)
+    if (bnt_ipv6__get_l4_proto(&ip6, &l4_proto) || l4_proto != IPPROTO_UDP)
         return XDP_PASS;
 
     ret = bnt_ipv6__next_off(&ip6, &l4_off);
@@ -64,12 +66,11 @@ int xdp_insert_srh(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != 5353)
         return XDP_PASS;
 
-    /* insert_srh() shifts everything after the IPv6 base header forward;
-     * the udp view above is now stale and isn't reused after this call. */
+    /* shifts everything after the IPv6 base header: udp is stale afterwards */
     ret = bnt_ipv6__insert_srh(&ip6, segs, 2);
     if (ret)
         return XDP_ABORTED;

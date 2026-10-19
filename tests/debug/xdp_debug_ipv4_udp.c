@@ -34,9 +34,10 @@ int xdp_debug_ipv4_udp(struct xdp_md *ctx)
     struct bnt_dbg_udp_event udp_event = {};
     __u32 key = 0;
     int ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
-    if (ret || bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (ret || bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return XDP_PASS;
     ret = bnt_ctx__find_ipv4(ctx, &ip4);
     if (ret)

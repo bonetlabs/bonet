@@ -20,10 +20,8 @@ int xdp_vlan_insert_remove(struct xdp_md *ctx)
     if (bnt_eth__parse(ctx, 0, &eth))
         return XDP_PASS;
 
-    /* get_vlan_depth() returns 0 both for genuinely untagged traffic and on
-     * error (e.g. a truncated packet); either way the insert below is what
-     * actually validates the packet, and fails safely if it can't proceed. */
-    depth = bnt_eth__get_vlan_depth(&eth);
+    /* depth is 0 on error too: the insert below then fails on the bad header */
+    bnt_eth__get_vlan_depth(&eth, &depth);
     if (depth == 0) {
         if (bnt_eth__insert_vlan(&eth, ETH_P_8021Q, 100))
             return XDP_ABORTED;

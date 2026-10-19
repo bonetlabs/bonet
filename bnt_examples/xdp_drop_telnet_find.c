@@ -27,14 +27,12 @@ int xdp_drop_telnet_syn_find(struct xdp_md *ctx)
     __u16 flags;
     int ret;
 
-    /* One call replaces the whole Ethernet/VLAN -> IPv4-or-IPv6 -> TCP walk
-     * from xdp_drop_telnet.c; fragments, non-TCP, and unsupported stacks all
-     * fold into this single non-zero return. */
+    /* fragments, non-TCP and unsupported stacks all return non-zero */
     ret = bnt_ctx__find_tcp(ctx, &tcp);
     if (ret)
         return XDP_PASS;
 
-    ret = bnt_tcp__get_dest(&tcp, &dport);
+    ret = bnt_tcp__get_dport(&tcp, &dport);
     if (ret)
         return XDP_PASS;
 

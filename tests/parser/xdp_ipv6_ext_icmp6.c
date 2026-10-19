@@ -22,9 +22,12 @@ int xdp_ipv6_ext_icmp6(struct xdp_md *ctx)
     __u32 l4_off;
     __u8 type = 0;
     int ret;
+    __u16 ethertype;
+    __u8 ext_depth;
+    __u8 l4_proto;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
-    if (ret || bnt_eth__get_ethertype(&eth) != ETH_P_IPV6)
+    if (ret || bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IPV6)
         return XDP_PASS;
     ret = bnt_eth__next_off(&eth, &l3_off);
     if (ret)
@@ -32,9 +35,9 @@ int xdp_ipv6_ext_icmp6(struct xdp_md *ctx)
     ret = bnt_ipv6__parse(ctx, l3_off, &ip6);
     if (ret)
         goto fail;
-    if (bnt_ipv6__get_ext_depth(&ip6) != 1)
+    if (bnt_ipv6__get_ext_depth(&ip6, &ext_depth) || ext_depth != 1)
         goto fail;
-    if (bnt_ipv6__get_l4_proto(&ip6) != IPPROTO_ICMPV6)
+    if (bnt_ipv6__get_l4_proto(&ip6, &l4_proto) || l4_proto != IPPROTO_ICMPV6)
         goto fail;
     ret = bnt_ipv6__next_off(&ip6, &l4_off);
     if (ret)

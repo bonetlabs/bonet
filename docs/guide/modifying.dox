@@ -47,8 +47,8 @@ reserved for changing many fields at once. Write the fields with the @c _no_csum
 setters, then rebuild the checksum once:
 
 @code{.c}
-bnt_tcp__set_dest_no_csum(&tcp, bpf_htons(8080));
-bnt_tcp__set_source_no_csum(&tcp, bpf_htons(40000));
+bnt_tcp__set_dport_no_csum(&tcp, 8080);
+bnt_tcp__set_sport_no_csum(&tcp, 40000);
 bnt_tcp__recompute_csum(&tcp, &ip);
 @endcode
 

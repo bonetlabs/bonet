@@ -34,13 +34,10 @@ int tc_insert_ipv6_outer(struct __sk_buff *skb)
     if (bnt_eth__next_ipv4(&eth, &inner))
         return TC_ACT_OK;
 
-    /* IPPROTO_IPIP (4) is the IANA protocol number for "IPv4 encapsulated";
-     * it's a valid IPv6 next-header value too, so the same constant marks
-     * this as a 4-in-6 tunnel. */
+    /* IPPROTO_IPIP is also the IPv6 next header of IPv4-in-IPv6 */
     if (bnt_eth__insert_ipv6(&eth, IPPROTO_IPIP, &outer_src, &outer_dst))
         return TC_ACT_SHOT;
-    /* inner (the pre-insert IPv4 view) is now stale; the new outer header
-     * is reached by parsing again from eth, which insert leaves valid. */
+    /* the insert leaves inner stale; eth stays valid */
     if (bnt_eth__next_ipv6(&eth, &outer))
         return TC_ACT_SHOT;
 

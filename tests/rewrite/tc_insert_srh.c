@@ -29,7 +29,7 @@ int tc_insert_srh(struct __sk_buff *skb)
     ret = bnt_ctx__find_udp(skb, &udp);
     if (ret)
         return TC_ACT_OK;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         return TC_ACT_OK;
 
@@ -48,7 +48,7 @@ int tc_insert_srh(struct __sk_buff *skb)
     ret = bnt_ctx__find_udp(skb, &udp);
     if (ret)
         goto fail;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         goto fail;
 

@@ -25,7 +25,7 @@ int drop_telnet(struct xdp_md *ctx)
     if (bnt_eth__next_ipv4(&eth, &ip)) return XDP_PASS;   /* not IPv4 */
     if (bnt_ipv4__next_tcp(&ip, &tcp)) return XDP_PASS;   /* not TCP  */
 
-    if (bnt_tcp__get_dest(&tcp, &dport) || bnt_tcp__is_syn(&tcp, &syn))
+    if (bnt_tcp__get_dport(&tcp, &dport) || bnt_tcp__is_syn(&tcp, &syn))
         return XDP_PASS;
 
     return (dport == 23 && syn) ? XDP_DROP : XDP_PASS;
@@ -79,7 +79,7 @@ case IPPROTO_UDP: {
 @endcode
 
 The protocol field is read with @c bnt_ipv4__get_protocol(),
-@c bnt_ipv6__get_l4_proto(), or @c bnt_eth__get_outer_proto().
+@c bnt_ipv6__get_l4_proto(), or @c bnt_eth__get_ethertype().
 
 @c bnt_eth__parse_l3() and @c bnt_ipv4__parse_l4() perform this dispatch in a
 single call, initializing whichever of the supplied views matches; see the
@@ -101,7 +101,7 @@ int drop_telnet(struct xdp_md *ctx)
 
     if (bnt_ctx__find_tcp(ctx, &tcp)) return XDP_PASS;
 
-    if (bnt_tcp__get_dest(&tcp, &dport) || bnt_tcp__is_syn(&tcp, &syn))
+    if (bnt_tcp__get_dport(&tcp, &dport) || bnt_tcp__is_syn(&tcp, &syn))
         return XDP_PASS;
 
     return (dport == 23 && syn) ? XDP_DROP : XDP_PASS;

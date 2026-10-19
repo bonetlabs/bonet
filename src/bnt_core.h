@@ -59,12 +59,11 @@
  *
  * In a global sub-program clang can drop the tight bound of a narrowed scalar
  * (header offset / prefix length / SRH segment offset), which the verifier then
- * rejects. WHICH scalars lose their bound depends on the clang version, so each
- * barrier site below carries its own #if listing exactly the versions that need
- * it — determined by per-site leave-one-out over the insert/remove/encap suite.
- * Conditions are gated only to tested versions (clang 16 is the floor; 23+ is
- * untested, so no assumption is made about it). The need is NOT monotonic:
- * clang 20 needs none, 18/19 need the most. clang 22 needs none of these — at
+ * rejects. Which scalars lose their bound depends on the clang version, so each
+ * barrier site below has its own #if listing the versions that need it, found
+ * by removing one site at a time over the insert/remove/encap tests. Only tested
+ * versions are listed (clang 16 is the floor; 23+ is untested). The need is not
+ * monotonic: clang 20 needs none, 18/19 need the most. clang 22 needs none of these — at
  * its _g entry BNT_TIGHTEN_OFFSET (below) covers it instead. In legacy mode
  * (old/stricter verifiers) every site is on.
  *
@@ -81,8 +80,7 @@
  * offsets stay bounded (and never sign-extend negative). The barrier keeps clang
  * from proving the clamp a no-op and dropping it. A no-op for valid offsets,
  * which are always <= the cap. Needed by clang 22 (and legacy); compiled out
- * everywhere else. Gated to exactly 22 (not >=) — clang 23 does not exist yet,
- * so we make no assumption about it.
+ * everywhere else. Gated to exactly 22, as later versions are untested.
  */
 #if BNT_LEGACY_KERNEL || __clang_major__ == 22
 #define BNT_TIGHTEN_OFFSET(x, cap)                                              \
@@ -94,19 +92,18 @@
 /*
  * Two orthogonal verifier modes (set by the backend header or the build):
  *   BNT_INLINE_ALL=0     - packet access lives in global BPF subprograms,
- *                           verified in isolation, independent of the caller
- *                           (paper §3.3). One bpf2bpf call per operation. Implies
+ *                           verified in isolation, independent of the caller.
+ *                           One bpf2bpf call per operation. Implies
  *                           the XDP backend, so code under #if !BNT_INLINE_ALL
  *                           may freely use the XDP-only __bnt_data_ptr. This is
- *                           the default (the guarantee mode); set BNT_INLINE_ALL=1
- *                           to inline every operation into the program instead.
+ *                           the default; BNT_INLINE_ALL=1 inlines every
+ *                           operation into the program instead.
  *   BNT_LEGACY_KERNEL  - inline bodies use CSE/volatile barriers to pass the
  *                           verifier without globals (only meaningful when
  *                           BNT_INLINE_ALL=1).
  * Three meaningful modes: (1,0) fast inline, (1,1) hardened inline, (0,*) globals.
- * The globals mode makes HARDEN unnecessary (a global already gives a clean
- * verifier state), so it forces HARDEN off — the rest of the code can then assume
- * the three modes are mutually exclusive.
+ * The globals mode does not need the barriers (a global starts from a clean
+ * verifier state), so it forces BNT_LEGACY_KERNEL off.
  */
 #ifndef BNT_INLINE_ALL
 #define BNT_INLINE_ALL 1
@@ -340,9 +337,8 @@ enum bnt_status {
 
 /*
  * Per-header offset bounds.  Each bnt_*__next_off clamps the offset it returns
- * to the (generous, power-of-two) maximum where that next header can realistically
- * begin.  This rejects absurdly deep nesting and — crucially — gives the returned
- * offset a tight verifier range, so a developer can take it and keep parsing an
+ * to a power-of-two maximum where that next header can begin. This rejects
+ * implausibly deep nesting and gives the returned offset a tight verifier range, so a developer can take it and keep parsing an
  * unsupported header with ordinary inline `data + off` code.  Without the clamp
  * the offset carries the wide range of the global BPF function that computed it,
  * and an inline access on it would fail to verify.  Override before include to
@@ -861,20 +857,16 @@ static __always_inline __u32 __bnt_arp_tpa_off(const bnt_arp *arp, const struct 
  * inside a non-static (global) BPF function verified once in isolation.
  * Callers pass only (ctx, off, typed_out) and never handle PTR_TO_PACKET.
  *
- * Primitive globals (Approach B): single typed read/write.
- * API-level globals (Approach A): complex logic, loops, or BPF helpers.
+ * Primitive globals: one typed read/write.
+ * Operation globals: a whole API call (loops, helpers, checksum).
  *
- * Placement: defined here (before their callers) so no forward declaration
- * is needed within a single-TU BPF program. Linkage is non-static + weak
- * (__attribute__((noinline, weak, nonnull(1)))): non-static keeps them
- * BTF_FUNC_GLOBAL so the verifier checks each once in isolation (the
- * caller-independent guarantee); weak lets the BPF static linker dedup the
- * definition when several TUs that include this header are combined into one
- * object (bpftool gen object / libbpf), instead of failing on a duplicate
- * symbol. static is NOT an option: it would make the verifier inline caller
- * state and drop the isolation. nonnull(1): the verifier only accepts a call to
- * a global whose ctx argument is the program's ctx, so ctx is never NULL inside
- * one and clang drops the !ctx checks of the inlined helpers.
+ * They are defined before their callers. __attribute__((noinline, weak, nonnull(1))):
+ *   - non-static keeps them BTF_FUNC_GLOBAL, so the verifier checks each once
+ *     in isolation (static would verify them with the caller's state);
+ *   - weak lets the BPF static linker keep one copy when several objects that
+ *     include this header are linked together;
+ *   - nonnull(1): a global can only be called with the program's ctx, so ctx
+ *     is never NULL and clang drops the !ctx checks of the inlined helpers.
  */
 #if !BNT_INLINE_ALL
 
@@ -1262,13 +1254,7 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_tcp_next_off_g(BNT_CTX_TYP
 }
 #endif
 
-/*
- * Metadata global: walks the Ethernet + VLAN stack and fills __bnt_eth_meta.
- * Like the navigation globals it performs all packet access through the
- * primitive read globals (no inline __bnt_read), so the VLAN loop and its
- * packet pointers are verified once in isolation rather than re-explored in
- * every caller.
- */
+/* Metadata global: walks the Ethernet + VLAN stack and fills __bnt_eth_meta. */
 /* Shared Ethernet/VLAN walk, inlined into eth_meta_g and the insert/remove fat
  * globals (so each is one self-contained global). Per-iteration VLAN reads go
  * through the primitive read globals. */
@@ -1332,16 +1318,10 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_eth_meta_g(BNT_CTX_TYPE *c
 }
 #endif
 
-/*
- * Metadata global: walks the IPv6 extension-header chain and fills
- * __bnt_ipv6_meta.  All packet access goes through the primitive read globals,
- * so the variable-iteration ext-header loop and its packet pointers are
- * verified once in isolation.
- */
+/* Metadata global: walks the IPv6 extension-header chain and fills __bnt_ipv6_meta. */
 /* Shared IPv6 extension-header walk, inlined into both __bnt_ipv6_meta_g and the
  * fat operation-globals (so each API is one self-contained global). The per-
- * iteration ext reads go through the primitive read globals — the only nesting,
- * targeted by a later cleanup phase. */
+ * iteration ext reads go through the primitive read globals. */
 static __always_inline int __bnt_ipv6_fill_meta(BNT_CTX_TYPE *ctx, __u32 off,
                                                  struct __bnt_ipv6_meta *m)
 {
@@ -1356,9 +1336,8 @@ static __always_inline int __bnt_ipv6_fill_meta(BNT_CTX_TYPE *ctx, __u32 off,
         return BNT_ERR_BAD_ARG;
     __builtin_memset(m, 0, sizeof(*m));
 
-    /* version byte (0) and nexthdr (6) live in the first 8 bytes: one
-     * straight-line data_ptr recovers both without a nested global and
-     * without the two-direct-reads double-materialization (F5). */
+    /* version (byte 0) and nexthdr (byte 6) are in the first 8 bytes: one
+     * data_ptr reads both, with no nested global */
     ret = __bnt_data_ptr(ctx, off, 8, (void **)&h);
     if (ret)
         return ret;
@@ -1449,10 +1428,7 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_ipv6_meta_g(BNT_CTX_TYPE *
 }
 #endif
 
-/*
- * Metadata global: reads the fixed ARP header and fills __bnt_arp_meta.
- * Per-field reads via the primitive globals keep all packet access confined.
- */
+/* Metadata global: reads the ARP header and fills __bnt_arp_meta. */
 __attribute__((noinline, weak, nonnull(1))) int __bnt_arp_meta_g(BNT_CTX_TYPE *ctx, __u32 off,
                                                 struct __bnt_arp_meta *m);
 #if !BNT_ASM_GLOBALS
@@ -1496,11 +1472,7 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_arp_meta_g(BNT_CTX_TYPE *c
 }
 #endif
 
-/*
- * Metadata global: reads the IPv4 header (incl. options) and fills
- * __bnt_ipv4_meta.  Per-field reads via the primitive globals keep all packet
- * access confined, so the variable-length-header bounds check is verified once.
- */
+/* Metadata global: reads the IPv4 header (incl. options) and fills __bnt_ipv4_meta. */
 __attribute__((noinline, weak, nonnull(1))) int __bnt_ipv4_meta_g(BNT_CTX_TYPE *ctx, __u32 off,
                                                  struct __bnt_ipv4_meta *m);
 #if !BNT_ASM_GLOBALS
@@ -1517,9 +1489,8 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_ipv4_meta_g(BNT_CTX_TYPE *
         return BNT_ERR_BAD_ARG;
     __builtin_memset(m, 0, sizeof(*m));
 
-    /* One bounded packet pointer — a single straight-line access re-establishes
-     * range even for a wide off (like the read primitives) — then fields are read
-     * directly from the packet: no per-field global calls, no stack header copy. */
+    /* One bounded packet pointer (a straight-line access keeps the range even
+     * for a wide off), then fields read directly: no per-field calls, no copy. */
     ret = __bnt_data_ptr(ctx, off, sizeof(struct iphdr), (void **)&ip);
     if (ret)
         return ret;
@@ -1557,7 +1528,7 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_ipv4_meta_g(BNT_CTX_TYPE *
 #endif /* !BNT_INLINE_ALL */
 
 /*
- * Primitive redirect macros: at level 2, shadow the inline read/write
+ * Primitive redirect macros: in global mode, shadow the inline read/write
  * primitives with their global BPF equivalents. The globals are defined
  * above (before this #define) so their own bodies still call the real
  * inlines; all callers from this point forward call the globals.
@@ -1571,10 +1542,8 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_ipv4_meta_g(BNT_CTX_TYPE *
 #define __bnt_write_be32 __bnt_write_be32_g
 #endif /* !BNT_INLINE_ALL */
 
-/*
- * Routes Ethernet metadata extraction to the global at level 2 (confining the
- * VLAN walk and its packet pointers) or to the inline helper otherwise.
- */
+/* The meta dispatchers call the metadata global in global mode, the inline
+ * helper otherwise. */
 static __always_inline int __bnt_eth_meta_dispatch(const bnt_eth *eth, struct __bnt_eth_meta *m)
 {
 #if !BNT_INLINE_ALL
@@ -1589,11 +1558,6 @@ static __always_inline int __bnt_eth_meta_dispatch(const bnt_eth *eth, struct __
 #endif
 }
 
-/*
- * Routes IPv4 metadata extraction to the global at level 2 (confining the
- * iphdr read and the variable-length-header bounds check) or to the inline
- * helper otherwise.
- */
 static __always_inline int __bnt_ipv4_meta_dispatch(const bnt_ipv4 *ip, struct __bnt_ipv4_meta *m)
 {
 #if !BNT_INLINE_ALL
@@ -1606,10 +1570,6 @@ static __always_inline int __bnt_ipv4_meta_dispatch(const bnt_ipv4 *ip, struct _
 #endif
 }
 
-/*
- * Routes IPv6 metadata extraction to the global at level 2 (confining the
- * extension-header walk and its packet pointers) or to the inline helper.
- */
 static __always_inline int __bnt_ipv6_meta_dispatch(const bnt_ipv6 *ip6, struct __bnt_ipv6_meta *m)
 {
 #if !BNT_INLINE_ALL
@@ -1622,7 +1582,6 @@ static __always_inline int __bnt_ipv6_meta_dispatch(const bnt_ipv6 *ip6, struct 
 #endif
 }
 
-/* Routes ARP metadata extraction to the global at level 2 or inline otherwise. */
 static __always_inline int __bnt_arp_meta_dispatch(const bnt_arp *arp, struct __bnt_arp_meta *m)
 {
 #if !BNT_INLINE_ALL
@@ -1694,7 +1653,7 @@ static __always_inline int bnt_eth__next_off(const bnt_eth *eth, __u32 *out)
 
 /** @ingroup bnt_eth
  *  Reads the Ethernet source MAC address. */
-static __always_inline int bnt_eth__get_src(const bnt_eth *eth, unsigned char out[BNT_MAC_LEN])
+static __always_inline int bnt_eth__get_smac(const bnt_eth *eth, unsigned char out[BNT_MAC_LEN])
 {
     if (!out)
         return BNT_ERR_BAD_ARG;
@@ -1716,7 +1675,7 @@ static __always_inline int bnt_eth__get_src(const bnt_eth *eth, unsigned char ou
 
 /** @ingroup bnt_eth
  *  Reads the Ethernet destination MAC address. */
-static __always_inline int bnt_eth__get_dst(const bnt_eth *eth, unsigned char out[BNT_MAC_LEN])
+static __always_inline int bnt_eth__get_dmac(const bnt_eth *eth, unsigned char out[BNT_MAC_LEN])
 {
     if (!out)
         return BNT_ERR_BAD_ARG;
@@ -1737,19 +1696,25 @@ static __always_inline int bnt_eth__get_dst(const bnt_eth *eth, unsigned char ou
 }
 
 /** @ingroup bnt_eth
- *  Returns the final inner EtherType (past any VLAN tags), or 0 on error. */
-static __always_inline __u16 bnt_eth__get_ethertype(const bnt_eth *eth)
+ *  Reads the final inner EtherType, past any VLAN tags. */
+static __always_inline int bnt_eth__get_ethertype(const bnt_eth *eth, __u16 *out)
 {
     struct __bnt_eth_meta meta;
+    int ret;
 
-    if (__bnt_eth_meta_dispatch(eth, &meta))
-        return 0;
-    return meta.proto;
+    if (!out)
+        return BNT_ERR_BAD_ARG;
+    *out = 0;
+    ret = __bnt_eth_meta_dispatch(eth, &meta);
+    if (ret)
+        return ret;
+    *out = meta.proto;
+    return BNT_OK;
 }
 
 /** @ingroup bnt_eth
  *  Reads the EtherType field immediately after the destination and source MAC addresses. */
-static __always_inline int bnt_eth__get_outer_proto(const bnt_eth *eth, __u16 *out)
+static __always_inline int bnt_eth__get_outer_ethertype(const bnt_eth *eth, __u16 *out)
 {
     __be16 v = 0;
     int ret;
@@ -1769,15 +1734,20 @@ static __always_inline int bnt_eth__get_outer_proto(const bnt_eth *eth, __u16 *o
 }
 
 /** @ingroup bnt_eth
- *  Returns the number of VLAN headers present after the Ethernet header, or
- *  0 on error. */
-static __always_inline __u8 bnt_eth__get_vlan_depth(const bnt_eth *eth)
+ *  Reads the number of VLAN headers present after the Ethernet header. */
+static __always_inline int bnt_eth__get_vlan_depth(const bnt_eth *eth, __u8 *out)
 {
     struct __bnt_eth_meta meta;
+    int ret;
 
-    if (__bnt_eth_meta_dispatch(eth, &meta))
-        return 0;
-    return meta.vlan_depth;
+    if (!out)
+        return BNT_ERR_BAD_ARG;
+    *out = 0;
+    ret = __bnt_eth_meta_dispatch(eth, &meta);
+    if (ret)
+        return ret;
+    *out = meta.vlan_depth;
+    return BNT_OK;
 }
 
 /** @ingroup bnt_eth
@@ -1830,7 +1800,7 @@ static __always_inline int bnt_eth__is_vlan_drop_eligible(const bnt_eth *eth, __
 
 /** @ingroup bnt_eth
  *  Writes the Ethernet source MAC address. */
-static __always_inline int bnt_eth__set_src(bnt_eth *eth, const unsigned char mac[BNT_MAC_LEN])
+static __always_inline int bnt_eth__set_smac(bnt_eth *eth, const unsigned char mac[BNT_MAC_LEN])
 {
     if (!eth || !mac)
         return BNT_ERR_BAD_ARG;
@@ -1847,7 +1817,7 @@ static __always_inline int bnt_eth__set_src(bnt_eth *eth, const unsigned char ma
 
 /** @ingroup bnt_eth
  *  Writes the Ethernet destination MAC address. */
-static __always_inline int bnt_eth__set_dst(bnt_eth *eth, const unsigned char mac[BNT_MAC_LEN])
+static __always_inline int bnt_eth__set_dmac(bnt_eth *eth, const unsigned char mac[BNT_MAC_LEN])
 {
     if (!eth || !mac)
         return BNT_ERR_BAD_ARG;
@@ -1939,11 +1909,11 @@ static __always_inline int bnt_eth__clear_vlan_drop_eligible(bnt_eth *eth, __u32
 
 /** @ingroup bnt_eth
  *  Writes the EtherType field immediately after the destination and source MAC addresses. */
-static __always_inline int bnt_eth__set_outer_proto(bnt_eth *eth, __u16 proto)
+static __always_inline int bnt_eth__set_outer_ethertype(bnt_eth *eth, __u16 ethertype)
 {
     if (!eth)
         return BNT_ERR_BAD_ARG;
-    return __bnt_write_be16(eth->__ctx, eth->__off + offsetof(struct ethhdr, h_proto), bpf_htons(proto));
+    return __bnt_write_be16(eth->__ctx, eth->__off + offsetof(struct ethhdr, h_proto), bpf_htons(ethertype));
 }
 
 /**
@@ -2222,15 +2192,15 @@ static __always_inline int bnt_ipv4__get_ihl(const bnt_ipv4 *ip, __u8 *out)
 }
 
 /** @ingroup bnt_ipv4
- *  Returns non-zero if the IPv4 packet is a fragment. */
-static __always_inline int bnt_ipv4__is_fragment(const bnt_ipv4 *ip, int *out)
+ *  Reports through @p out whether the IPv4 packet is a fragment (non-zero offset or MF set). */
+static __always_inline int bnt_ipv4__is_fragment(const bnt_ipv4 *ip, bool *out)
 {
     __be16 v = 0;
     int ret;
 
     if (!out)
         return BNT_ERR_BAD_ARG;
-    *out = 0;
+    *out = false;
     if (!ip)
         return BNT_ERR_BAD_ARG;
 
@@ -2571,17 +2541,24 @@ static __always_inline int bnt_ipv6__get_payload_len(const bnt_ipv6 *ip6, __u16 
 }
 
 /** @ingroup bnt_ipv6
- *  Returns the final upper-layer protocol resolved after walking past any
- *  extension headers, or 0 on error or on a non-first fragment. */
-static __always_inline __u8 bnt_ipv6__get_l4_proto(const bnt_ipv6 *ip6)
+ *  Reads the final upper-layer protocol, past any extension headers.
+ *  @retval BNT_ERR_FRAGMENT  a non-first fragment, which has no upper-layer
+ *                            header (*out is 0). */
+static __always_inline int bnt_ipv6__get_l4_proto(const bnt_ipv6 *ip6, __u8 *out)
 {
     struct __bnt_ipv6_meta meta;
+    int ret;
 
-    if (__bnt_ipv6_meta_dispatch(ip6, &meta))
-        return 0;
+    if (!out)
+        return BNT_ERR_BAD_ARG;
+    *out = 0;
+    ret = __bnt_ipv6_meta_dispatch(ip6, &meta);
+    if (ret)
+        return ret;
     if (!meta.l4_off_valid)
-        return 0;
-    return meta.l4_proto;
+        return BNT_ERR_FRAGMENT;
+    *out = meta.l4_proto;
+    return BNT_OK;
 }
 
 /** @ingroup bnt_ipv6
@@ -2594,28 +2571,6 @@ static __always_inline int bnt_ipv6__get_base_nexthdr(const bnt_ipv6 *ip6, __u8 
     if (!ip6)
         return BNT_ERR_BAD_ARG;
     return __bnt_read_u8(ip6->__ctx, ip6->__off + offsetof(struct ipv6hdr, nexthdr), out);
-}
-
-/** @ingroup bnt_ipv6
- *  Returns non-zero if the IPv6 packet contains a Fragment extension header. */
-static __always_inline int bnt_ipv6__has_fragment_hdr(const bnt_ipv6 *ip6)
-{
-    struct __bnt_ipv6_meta meta;
-
-    if (__bnt_ipv6_meta_dispatch(ip6, &meta))
-        return 0;
-    return meta.has_fragment_hdr;
-}
-
-/** @ingroup bnt_ipv6
- *  Returns non-zero if the IPv6 packet is a non-first or non-complete fragment. */
-static __always_inline int bnt_ipv6__is_fragment(const bnt_ipv6 *ip6)
-{
-    struct __bnt_ipv6_meta meta;
-
-    if (__bnt_ipv6_meta_dispatch(ip6, &meta))
-        return 0;
-    return meta.is_fragment;
 }
 
 /** @ingroup bnt_ipv6
@@ -2639,7 +2594,7 @@ static __always_inline int bnt_ipv6__has_fragment_header(const bnt_ipv6 *ip6, bo
 
 /** @ingroup bnt_ipv6
  *  Reports through @p out whether the IPv6 packet is a fragment (non-zero offset or MF set). */
-static __always_inline int bnt_ipv6__is_fragmented(const bnt_ipv6 *ip6, bool *out)
+static __always_inline int bnt_ipv6__is_fragment(const bnt_ipv6 *ip6, bool *out)
 {
     struct __bnt_ipv6_meta meta;
     int ret;
@@ -2807,15 +2762,20 @@ static __always_inline int bnt_ipv6__clear_more_fragments(bnt_ipv6 *ip6)
 }
 
 /** @ingroup bnt_ipv6
- *  Returns the number of extension headers parsed during the IPv6 header walk,
- *  or 0 on error. */
-static __always_inline __u8 bnt_ipv6__get_ext_depth(const bnt_ipv6 *ip6)
+ *  Reads the number of extension headers parsed during the IPv6 header walk. */
+static __always_inline int bnt_ipv6__get_ext_depth(const bnt_ipv6 *ip6, __u8 *out)
 {
     struct __bnt_ipv6_meta meta;
+    int ret;
 
-    if (__bnt_ipv6_meta_dispatch(ip6, &meta))
-        return 0;
-    return meta.ext_depth;
+    if (!out)
+        return BNT_ERR_BAD_ARG;
+    *out = 0;
+    ret = __bnt_ipv6_meta_dispatch(ip6, &meta);
+    if (ret)
+        return ret;
+    *out = meta.ext_depth;
+    return BNT_OK;
 }
 
 /** @ingroup bnt_ipv6
@@ -3677,7 +3637,7 @@ static __always_inline int bnt_tcp__next_off(const bnt_tcp *tcp, __u32 *out)
 
 /** @ingroup bnt_tcp
  *  Reads the TCP source port. */
-static __always_inline int bnt_tcp__get_source(const bnt_tcp *tcp, __u16 *out)
+static __always_inline int bnt_tcp__get_sport(const bnt_tcp *tcp, __u16 *out)
 {
     __be16 v = 0;
     int ret;
@@ -3696,7 +3656,7 @@ static __always_inline int bnt_tcp__get_source(const bnt_tcp *tcp, __u16 *out)
 
 /** @ingroup bnt_tcp
  *  Reads the TCP destination port. */
-static __always_inline int bnt_tcp__get_dest(const bnt_tcp *tcp, __u16 *out)
+static __always_inline int bnt_tcp__get_dport(const bnt_tcp *tcp, __u16 *out)
 {
     __be16 v = 0;
     int ret;
@@ -3752,14 +3712,20 @@ static __always_inline int bnt_tcp__get_ack_seq(const bnt_tcp *tcp, __u32 *out)
 }
 
 /** @ingroup bnt_tcp
- *  Returns the TCP data offset in 32-bit words, or 0 on error. */
-static __always_inline __u32 bnt_tcp__get_doff(const bnt_tcp *tcp)
+ *  Reads the TCP data offset, in 32-bit words. */
+static __always_inline int bnt_tcp__get_doff(const bnt_tcp *tcp, __u32 *out)
 {
     __u32 hlen;
+    int ret;
 
-    if (__bnt_tcp_hlen(tcp, &hlen))
-        return 0;
-    return hlen / 4;
+    if (!out)
+        return BNT_ERR_BAD_ARG;
+    *out = 0;
+    ret = __bnt_tcp_hlen(tcp, &hlen);
+    if (ret)
+        return ret;
+    *out = hlen / 4;
+    return BNT_OK;
 }
 
 /** @ingroup bnt_tcp
@@ -3928,7 +3894,7 @@ static __always_inline int bnt_tcp__set_check(bnt_tcp *tcp, __u16 check)
 }
 
 /** Writes the TCP source port without updating the checksum. */
-static __always_inline int __bnt_tcp__set_source_raw(bnt_tcp *tcp, __u16 port)
+static __always_inline int __bnt_tcp__set_sport_raw(bnt_tcp *tcp, __u16 port)
 {
     if (!tcp)
         return BNT_ERR_BAD_ARG;
@@ -3936,7 +3902,7 @@ static __always_inline int __bnt_tcp__set_source_raw(bnt_tcp *tcp, __u16 port)
 }
 
 /** Writes the TCP destination port without updating the checksum. */
-static __always_inline int __bnt_tcp__set_dest_raw(bnt_tcp *tcp, __u16 port)
+static __always_inline int __bnt_tcp__set_dport_raw(bnt_tcp *tcp, __u16 port)
 {
     if (!tcp)
         return BNT_ERR_BAD_ARG;
@@ -4056,7 +4022,7 @@ static __always_inline int bnt_udp__next_off(const bnt_udp *udp, __u32 *out)
 
 /** @ingroup bnt_udp
  *  Reads the UDP source port. */
-static __always_inline int bnt_udp__get_source(const bnt_udp *udp, __u16 *out)
+static __always_inline int bnt_udp__get_sport(const bnt_udp *udp, __u16 *out)
 {
     __be16 v = 0;
     int ret;
@@ -4075,7 +4041,7 @@ static __always_inline int bnt_udp__get_source(const bnt_udp *udp, __u16 *out)
 
 /** @ingroup bnt_udp
  *  Reads the UDP destination port. */
-static __always_inline int bnt_udp__get_dest(const bnt_udp *udp, __u16 *out)
+static __always_inline int bnt_udp__get_dport(const bnt_udp *udp, __u16 *out)
 {
     __be16 v = 0;
     int ret;
@@ -4140,7 +4106,7 @@ static __always_inline int bnt_udp__set_check(bnt_udp *udp, __u16 check)
 }
 
 /** Writes the UDP source port without updating the checksum. */
-static __always_inline int __bnt_udp__set_source_raw(bnt_udp *udp, __u16 port)
+static __always_inline int __bnt_udp__set_sport_raw(bnt_udp *udp, __u16 port)
 {
     if (!udp)
         return BNT_ERR_BAD_ARG;
@@ -4148,7 +4114,7 @@ static __always_inline int __bnt_udp__set_source_raw(bnt_udp *udp, __u16 port)
 }
 
 /** Writes the UDP destination port without updating the checksum. */
-static __always_inline int __bnt_udp__set_dest_raw(bnt_udp *udp, __u16 port)
+static __always_inline int __bnt_udp__set_dport_raw(bnt_udp *udp, __u16 port)
 {
     if (!udp)
         return BNT_ERR_BAD_ARG;
@@ -5255,15 +5221,23 @@ static __always_inline int bnt_arp__next_off(const bnt_arp *arp, __u32 *out)
 }
 
 /** @ingroup bnt_arp
- *  Returns non-zero if the ARP message is Ethernet over IPv4 with standard
- *  address sizes, or 0 on error. */
-static __always_inline int bnt_arp__is_eth_ipv4(const bnt_arp *arp)
+ *  Reports through @p out whether the ARP message is Ethernet over IPv4 with
+ *  standard address sizes. */
+static __always_inline int bnt_arp__is_eth_ipv4(const bnt_arp *arp, bool *out)
 {
     struct __bnt_arp_meta meta;
+    int ret;
 
-    if (__bnt_arp_meta_dispatch(arp, &meta))
-        return 0;
-    return __bnt_arp_is_eth_ipv4_meta(&meta);
+    if (!out)
+        return BNT_ERR_BAD_ARG;
+    *out = false;
+
+    ret = __bnt_arp_meta_dispatch(arp, &meta);
+    if (ret)
+        return ret;
+
+    *out = __bnt_arp_is_eth_ipv4_meta(&meta) != 0;
+    return BNT_OK;
 }
 
 /** @ingroup bnt_arp
@@ -7499,13 +7473,9 @@ static __always_inline int bnt_ipv6__parse_l4(const bnt_ipv6 *ip6,
  *   - BNT_MAX_PAYLOAD / BNT_CSUM_CHUNK + 1 iterations to the verifier's
  *     instruction count (1 000 000-instruction limit)
  *
- * Both limits are shared with the rest of the calling program. If the program
- * exceeds either limit when calling a recompute function, the recommended fix
- * is to move the recompute calls into a dedicated BPF program invoked via a
- * tail call (bpf_tail_call + BPF_MAP_TYPE_PROG_ARRAY). A tail call replaces
- * the current frame entirely, so the recompute program starts with a fresh
- * 512-byte stack and a fresh 1 000 000-instruction budget, independent of the
- * caller. Tail calls are supported for both XDP and TC program types.
+ * Both limits are shared with the rest of the calling program. If it exceeds
+ * either, move the recompute into a separate program reached with a tail call,
+ * which starts with its own stack and instruction budget.
  */
 
 /** Recomputes the IPv4 header checksum from scratch. Requires IHL=5 (no options). */
@@ -7964,7 +7934,7 @@ int __bnt_udp_set_port_g(BNT_CTX_TYPE *ctx, __u32 off, __u16 port, int is_dest)
  * @retval BNT_ERR_BAD_ARG @p tcp is NULL.
  * @retval BNT_ERR_TRUNC   the write falls outside the packet.
  */
-static __always_inline int bnt_tcp__set_source(bnt_tcp *tcp, __u16 port)
+static __always_inline int bnt_tcp__set_sport(bnt_tcp *tcp, __u16 port)
 {
     if (!tcp) return BNT_ERR_BAD_ARG;
 #if !BNT_INLINE_ALL
@@ -7992,7 +7962,7 @@ static __always_inline int bnt_tcp__set_source(bnt_tcp *tcp, __u16 port)
  * @retval BNT_ERR_BAD_ARG @p tcp is NULL.
  * @retval BNT_ERR_TRUNC   the write falls outside the packet.
  */
-static __always_inline int bnt_tcp__set_dest(bnt_tcp *tcp, __u16 port)
+static __always_inline int bnt_tcp__set_dport(bnt_tcp *tcp, __u16 port)
 {
     if (!tcp) return BNT_ERR_BAD_ARG;
 #if !BNT_INLINE_ALL
@@ -8377,7 +8347,7 @@ static __always_inline int bnt_tcp__set_doff(bnt_tcp *tcp, __u32 doff)
  * @retval BNT_ERR_BAD_ARG @p udp is NULL.
  * @retval BNT_ERR_TRUNC   the write falls outside the packet.
  */
-static __always_inline int bnt_udp__set_source(bnt_udp *udp, __u16 port)
+static __always_inline int bnt_udp__set_sport(bnt_udp *udp, __u16 port)
 {
     if (!udp) return BNT_ERR_BAD_ARG;
 #if !BNT_INLINE_ALL
@@ -8407,7 +8377,7 @@ static __always_inline int bnt_udp__set_source(bnt_udp *udp, __u16 port)
  * @retval BNT_ERR_BAD_ARG @p udp is NULL.
  * @retval BNT_ERR_TRUNC   the write falls outside the packet.
  */
-static __always_inline int bnt_udp__set_dest(bnt_udp *udp, __u16 port)
+static __always_inline int bnt_udp__set_dport(bnt_udp *udp, __u16 port)
 {
     if (!udp) return BNT_ERR_BAD_ARG;
 #if !BNT_INLINE_ALL

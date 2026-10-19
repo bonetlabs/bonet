@@ -19,11 +19,12 @@ int xdp_ipv4_fragment(struct xdp_md *ctx)
     __u32 l3_off;
     __u32 l4_off;
     __u16 dport = 0;
-    int is_fragment = 0;
+    bool is_fragment = false;
     int ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
-    if (ret || bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (ret || bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return XDP_PASS;
     ret = bnt_eth__next_off(&eth, &l3_off);
     if (ret)
@@ -40,7 +41,7 @@ int xdp_ipv4_fragment(struct xdp_md *ctx)
     ret = bnt_udp__parse(ctx, l4_off, &udp);
     if (ret)
         goto fail;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         goto fail;
 

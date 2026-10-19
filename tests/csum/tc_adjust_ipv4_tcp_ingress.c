@@ -40,13 +40,14 @@ int tc_adjust_ipv4_tcp_ingress(struct __sk_buff *skb)
     __u32 tcp_hlen;
     __u32 payload_len;
     __u32 l3_off, l4_off;
-    int   is_fragment;
+    bool  is_fragment;
     int   ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(skb, 0, &eth);
     if (ret)
         return TC_ACT_OK;
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return TC_ACT_OK;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -73,7 +74,7 @@ int tc_adjust_ipv4_tcp_ingress(struct __sk_buff *skb)
     if (ret)
         return TC_ACT_OK;
 
-    ret = bnt_tcp__get_dest(&tcp, &dport);
+    ret = bnt_tcp__get_dport(&tcp, &dport);
     if (ret || dport != PORT_FROM)
         return TC_ACT_OK;
 
@@ -85,7 +86,8 @@ int tc_adjust_ipv4_tcp_ingress(struct __sk_buff *skb)
     if (ret)
         return TC_ACT_OK;
 
-    tcp_hlen = bnt_tcp__get_doff(&tcp) * 4;
+    bnt_tcp__get_doff(&tcp, &tcp_hlen);   /* 0 on error */
+    tcp_hlen *= 4;
     if (!tcp_hlen)
         return TC_ACT_OK;
     if (old_total_len < ip_hlen + tcp_hlen)
@@ -102,7 +104,7 @@ int tc_adjust_ipv4_tcp_ingress(struct __sk_buff *skb)
     }
 
     /* Rewrite destination port for the listener */
-    ret = bnt_tcp__set_dest_no_csum(&tcp, PORT_TO);
+    ret = bnt_tcp__set_dport_no_csum(&tcp, PORT_TO);
     if (ret)
         return TC_ACT_SHOT;
 

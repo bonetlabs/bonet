@@ -16,11 +16,12 @@ int xdp_ipv4_nonfirst_fragment(struct xdp_md *ctx)
     bnt_udp udp;
     __u32 l3_off;
     __u32 l4_off;
-    int is_fragment = 0;
+    bool is_fragment = false;
     int ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
-    if (ret || bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (ret || bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return XDP_PASS;
     ret = bnt_eth__next_off(&eth, &l3_off);
     if (ret)

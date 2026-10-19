@@ -9,15 +9,15 @@
 #include "bnt_tc_egress.h"
 
 /*
- * Specular egress companion for tc_csum_ipv4_tcp_full.
+ * Egress counterpart of tc_csum_ipv4_tcp_full.
  *
  * Loaded on Machine B TC egress.
  * Rewrites sport 8888→7777 so Machine A's TCP stack accepts the SYN/ACK.
  *
  * On TC egress ip_summed=CHECKSUM_PARTIAL: the TCP checksum field holds only
  * the pseudo-header sum P.  skb_checksum_help computes the final checksum
- * AFTER TC egress using P as the initial seed.  We must NOT touch the
- * checksum field; updating the port bytes is enough.
+ * after TC egress using P as the initial seed. So the checksum field is left
+ * alone: rewriting the port bytes is enough.
  */
 
 #define PORT_FROM 7777
@@ -32,13 +32,14 @@ int tc_csum_ipv4_tcp_full_egress(struct __sk_buff *skb)
     __u8  proto;
     __u16 sport;
     __u32 l3_off, l4_off;
-    int   is_fragment;
+    bool  is_fragment;
     int   ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(skb, 0, &eth);
     if (ret)
         return TC_ACT_OK;
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return TC_ACT_OK;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -65,14 +66,11 @@ int tc_csum_ipv4_tcp_full_egress(struct __sk_buff *skb)
     if (ret)
         return TC_ACT_OK;
 
-    ret = bnt_tcp__get_source(&tcp, &sport);
+    ret = bnt_tcp__get_sport(&tcp, &sport);
     if (ret || sport != PORT_TO)
         return TC_ACT_OK;
 
-    /* Write new source port; update the packet bytes with the egress-safe setter.
-     * skb_checksum_help uses the unchanged pseudo-header seed to produce
-     * the correct full TCP checksum for the rewritten port. */
-    ret = bnt_tcp__set_source(&tcp, PORT_FROM);
+    ret = bnt_tcp__set_sport(&tcp, PORT_FROM);
     if (ret)
         return TC_ACT_SHOT;
 

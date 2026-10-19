@@ -14,7 +14,7 @@
  *
  * Validation goal:
  *   - validates dual-stack dispatch (IPv4 and IPv6)
- *   - validates bnt_tcp__set_dest() checksum adjustment on skb packets
+ *   - validates bnt_tcp__set_dport() checksum adjustment on skb packets
  *
  * Behavior:
  *   - rewrites TCP destination port 80 to 8080
@@ -32,8 +32,10 @@ int tc_http_to_8080(struct __sk_buff *skb)
     __u8 proto;
     __u32 l3_off;
     __u32 l4_off;
-    int is_fragment;
+    bool is_fragment;
     int ret;
+    bool has_frag;
+        __u8 l4_proto;
 
     /* Same call as the XDP examples; only the context type (struct
      * __sk_buff *) and the included backend header change. */
@@ -45,7 +47,7 @@ int tc_http_to_8080(struct __sk_buff *skb)
     if (ret)
         return TC_ACT_OK;
 
-    ethertype = bnt_eth__get_ethertype(&eth);
+    bnt_eth__get_ethertype(&eth, &ethertype);
     if (ethertype == ETH_P_IP) {
         ret = bnt_ipv4__parse(skb, l3_off, &ip4);
         if (ret)
@@ -64,9 +66,9 @@ int tc_http_to_8080(struct __sk_buff *skb)
             return TC_ACT_OK;
     } else if (ethertype == ETH_P_IPV6) {
         ret = bnt_ipv6__parse(skb, l3_off, &ip6);
-        if (ret || bnt_ipv6__has_fragment_hdr(&ip6))
+        if (ret || bnt_ipv6__has_fragment_header(&ip6, &has_frag) || has_frag)
             return TC_ACT_OK;
-        if (bnt_ipv6__get_l4_proto(&ip6) != IPPROTO_TCP)
+        if (bnt_ipv6__get_l4_proto(&ip6, &l4_proto) || l4_proto != IPPROTO_TCP)
             return TC_ACT_OK;
         ret = bnt_ipv6__next_off(&ip6, &l4_off);
         if (ret)
@@ -78,18 +80,15 @@ int tc_http_to_8080(struct __sk_buff *skb)
         return TC_ACT_OK;
     }
 
-    ret = bnt_tcp__get_dest(&tcp, &dport);
+    ret = bnt_tcp__get_dport(&tcp, &dport);
     if (ret)
         return TC_ACT_OK;
 
     if (dport != 80)
         return TC_ACT_OK;
 
-    /* set_dest() takes the port in host byte order (plain 8080, no
-     * bpf_htons) and fixes up the TCP checksum in the same call. A failure
-     * here means the rewrite didn't happen; let the verdict reflect that
-     * instead of forwarding an inconsistent packet. */
-    ret = bnt_tcp__set_dest(&tcp, 8080);
+    /* host byte order; also fixes the TCP checksum */
+    ret = bnt_tcp__set_dport(&tcp, 8080);
     if (ret)
         return TC_ACT_SHOT;
 

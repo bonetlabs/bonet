@@ -28,7 +28,7 @@ int xdp_insert_srh(struct xdp_md *ctx)
     ret = bnt_ctx__find_udp(ctx, &udp);
     if (ret)
         return XDP_PASS;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         return XDP_PASS;
 
@@ -47,7 +47,7 @@ int xdp_insert_srh(struct xdp_md *ctx)
     ret = bnt_ctx__find_udp(ctx, &udp);
     if (ret)
         goto fail;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         goto fail;
 

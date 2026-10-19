@@ -13,7 +13,7 @@
  * Example 8: XDP TCP SNAT with full checksum recompute.
  *
  * Validation goal:
- *   - validates bnt_ipv4__set_saddr_no_csum() and bnt_tcp__set_source_no_csum()
+ *   - validates bnt_ipv4__set_saddr_no_csum() and bnt_tcp__set_sport_no_csum()
  *   - validates bnt_ipv4__recompute_csum() (full IPv4 header recompute)
  *   - validates bnt_tcp__recompute_csum() (full TCP checksum with payload loop)
  *   - exercises the BPF verifier with the BNT_MAX_PAYLOAD iteration bound
@@ -37,14 +37,15 @@ int xdp_tcp_snat_recompute(struct xdp_md *ctx)
     __u8   proto;
     __u32  l3_off;
     __u32  l4_off;
-    int    is_fragment;
+    bool   is_fragment;
     int    ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
     if (ret)
         return XDP_PASS;
 
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return XDP_PASS;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -78,15 +79,12 @@ int xdp_tcp_snat_recompute(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    /* Unlike tc_ipv4_dnat.c, which uses the ordinary set_saddr()/set_dest()
-     * and lets each call fix up its own slice of the checksum, this example
-     * deliberately defers all checksum work to the recompute calls below —
-     * worthwhile only when several fields change at once. */
+    /* no checksum update here: the recompute below rebuilds it */
     ret = bnt_ipv4__set_saddr_no_csum(&ip4, rewrite_ip);
     if (ret)
         return XDP_ABORTED;
 
-    ret = bnt_tcp__set_source_no_csum(&tcp, 40000);
+    ret = bnt_tcp__set_sport_no_csum(&tcp, 40000);
     if (ret)
         return XDP_ABORTED;
 

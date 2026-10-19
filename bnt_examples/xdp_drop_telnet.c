@@ -29,16 +29,16 @@ int xdp_drop_telnet_syn(struct xdp_md *ctx)
     __u8 proto;
     __u32 l3_off;
     __u32 l4_off;
-    int is_fragment;
+    bool is_fragment;
     int ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
     if (ret)
         return XDP_PASS;
 
-    /* get_ethertype() resolves past any VLAN tags; non-IPv4 traffic is out
-     * of scope for this example, not an error. */
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    /* the EtherType past any VLAN tags */
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return XDP_PASS;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -67,7 +67,7 @@ int xdp_drop_telnet_syn(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    ret = bnt_tcp__get_dest(&tcp, &dport);
+    ret = bnt_tcp__get_dport(&tcp, &dport);
     if (ret)
         return XDP_PASS;
 

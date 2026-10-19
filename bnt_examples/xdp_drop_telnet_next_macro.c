@@ -32,10 +32,7 @@ int xdp_drop_telnet_syn_next_macro(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    /* next_header() picks bnt_eth__next_ipv4()/next_ipv6() at compile time
-     * from the type of &ip4; same call site works for either destination
-     * type. Compare with xdp_drop_telnet_next_direct.c, which spells out
-     * the typed call instead. */
+    /* picks bnt_eth__next_ipv4() at compile time from the type of &ip4 */
     ret = bnt_eth__next_header(&eth, &ip4);
     if (ret)
         return XDP_PASS;
@@ -44,7 +41,7 @@ int xdp_drop_telnet_syn_next_macro(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    ret = bnt_tcp__get_dest(&tcp, &dport);
+    ret = bnt_tcp__get_dport(&tcp, &dport);
     if (ret)
         return XDP_PASS;
 

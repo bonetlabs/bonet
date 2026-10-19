@@ -26,8 +26,8 @@ int tc_fib6_forward(struct __sk_buff *ctx)
 
     if (bnt_ipv6__dec_hop_limit(&ip6, NULL))
         return TC_ACT_SHOT;
-    if (bnt_eth__set_src(&eth, bnt_fib6__get_smac(&fib)) ||
-        bnt_eth__set_dst(&eth, bnt_fib6__get_dmac(&fib)))
+    if (bnt_eth__set_smac(&eth, bnt_fib6__get_smac(&fib)) ||
+        bnt_eth__set_dmac(&eth, bnt_fib6__get_dmac(&fib)))
         return TC_ACT_SHOT;
 
     return bpf_redirect(bnt_fib6__get_out_ifindex(&fib), 0);

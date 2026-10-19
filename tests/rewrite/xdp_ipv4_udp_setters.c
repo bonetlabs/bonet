@@ -28,7 +28,7 @@ int xdp_ipv4_udp_setters(struct xdp_md *ctx)
     ret = bnt_ctx__find_udp(ctx, &udp);
     if (ret)
         return XDP_PASS;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret || dport != PORT_FROM)
         return XDP_PASS;
 
@@ -44,7 +44,7 @@ int xdp_ipv4_udp_setters(struct xdp_md *ctx)
     ret = bnt_ipv4__set_id(&ip4, 0x4242);
     if (ret)
         goto fail;
-    ret = bnt_udp__set_dest(&udp, PORT_TO);
+    ret = bnt_udp__set_dport(&udp, PORT_TO);
     if (ret)
         goto fail;
 
@@ -57,7 +57,7 @@ int xdp_ipv4_udp_setters(struct xdp_md *ctx)
     ret = bnt_ipv4__get_id(&ip4, &id);
     if (ret)
         goto fail;
-    ret = bnt_udp__get_dest(&udp, &dport);
+    ret = bnt_udp__get_dport(&udp, &dport);
     if (ret)
         goto fail;
     if (tos != 0x2e || ttl != 42 || id != 0x4242 || dport != PORT_TO)

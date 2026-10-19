@@ -33,7 +33,7 @@ int xdp_srv6_encap(struct xdp_md *ctx)
     if (bnt_eth__parse(ctx, 0, &eth))
         return XDP_PASS;
 
-    inner_ethertype = bnt_eth__get_ethertype(&eth);
+    bnt_eth__get_ethertype(&eth, &inner_ethertype);
     if (inner_ethertype == ETH_P_IP)
         inner_nexthdr = IPPROTO_IPIP;
     else if (inner_ethertype == ETH_P_IPV6)
@@ -53,8 +53,8 @@ int xdp_srv6_encap(struct xdp_md *ctx)
     if (!bnt_fib6__is_success(&fib))
         return XDP_PASS;
 
-    if (bnt_eth__set_src(&eth, bnt_fib6__get_smac(&fib)) ||
-        bnt_eth__set_dst(&eth, bnt_fib6__get_dmac(&fib)))
+    if (bnt_eth__set_smac(&eth, bnt_fib6__get_smac(&fib)) ||
+        bnt_eth__set_dmac(&eth, bnt_fib6__get_dmac(&fib)))
         return XDP_ABORTED;
 
     return bpf_redirect(bnt_fib6__get_out_ifindex(&fib), 0);

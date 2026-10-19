@@ -22,10 +22,11 @@ SEC("xdp")
 int xdp_insert_mpls_label(struct xdp_md *ctx)
 {
     bnt_eth eth;
+    __u16 ethertype;
 
     if (bnt_eth__parse(ctx, 0, &eth))
         return XDP_PASS;
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return XDP_PASS;
 
     /* BOS is set automatically: the current EtherType is IPv4, not MPLS, so

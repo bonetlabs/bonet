@@ -32,19 +32,15 @@ int xdp_insert_ipv4_outer(struct xdp_md *ctx)
     if (bnt_ipv4__get_hlen(&inner, &inner_hlen) ||
         bnt_ipv4__get_total_len(&inner, &inner_len))
         return XDP_PASS;
-    /* insert_ipv4() derives the new outer total_len from the remaining
-     * packet size; reject an inner header with options (this example keeps
-     * things simple) or a length that would overflow the 16-bit field once
-     * wrapped in another IPv4 header. */
+    /* insert_ipv4() derives the outer total_len from the packet size: reject
+     * inner options and a length that would overflow it */
     if (inner_hlen != sizeof(struct iphdr) ||
         inner_len > 0xffff - sizeof(struct iphdr))
         return XDP_PASS;
 
     if (bnt_eth__insert_ipv4(&eth, IPPROTO_IPIP, outer_src, outer_dst))
         return XDP_ABORTED;
-    /* eth itself stays valid across the insert; what was the IPv4 view at
-     * &inner doesn't (it now points at stale offsets), so it's not reused
-     * below — the new outer header is reached by parsing again. */
+    /* the insert leaves inner stale; eth stays valid */
     if (bnt_eth__next_ipv4(&eth, &outer))
         return XDP_ABORTED;
 

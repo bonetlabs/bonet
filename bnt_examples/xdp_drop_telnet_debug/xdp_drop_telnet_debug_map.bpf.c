@@ -40,9 +40,10 @@ struct {
 
 static __always_inline void debug_vlans_map(const bnt_eth *eth)
 {
-    __u8 depth = bnt_eth__get_vlan_depth(eth);
+    __u8 depth;
     __u32 i;
 
+    bnt_eth__get_vlan_depth(eth, &depth);   /* 0 on error */
 #pragma unroll
     for (i = 0; i < BNT_MAX_VLAN_DEPTH; i++) {
         if (i < depth) {
@@ -65,8 +66,9 @@ int xdp_drop_telnet_syn_debug_map(struct xdp_md *ctx)
     __u8 proto;
     __u32 l3_off;
     __u32 l4_off;
-    int is_fragment;
+    bool is_fragment;
     int ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(ctx, 0, &eth);
     if (ret)
@@ -75,7 +77,7 @@ int xdp_drop_telnet_syn_debug_map(struct xdp_md *ctx)
     bnt_dbg_eth__update_map(&eth, &bnt_debug_eth_latest, &key, BPF_ANY);
     debug_vlans_map(&eth);
 
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return XDP_PASS;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -106,7 +108,7 @@ int xdp_drop_telnet_syn_debug_map(struct xdp_md *ctx)
     key = BNT_DEBUG_SLOT_LATEST;
     bnt_dbg_tcp__update_map(&tcp, &bnt_debug_tcp_latest, &key, BPF_ANY);
 
-    ret = bnt_tcp__get_dest(&tcp, &dport);
+    ret = bnt_tcp__get_dport(&tcp, &dport);
     if (ret)
         return XDP_PASS;
 

@@ -17,11 +17,12 @@ int xdp_arp_setters(struct xdp_md *ctx)
     unsigned char tha[ETH_ALEN];
     __u16 oper = 0;
     int ret;
+    bool eth_ipv4;
 
     ret = bnt_ctx__find_arp(ctx, &arp);
     if (ret)
         return XDP_PASS;
-    if (!bnt_arp__is_eth_ipv4(&arp))
+    if (bnt_arp__is_eth_ipv4(&arp, &eth_ipv4) || !eth_ipv4)
         return XDP_PASS;
     ret = bnt_arp__get_sha(&arp, sha);
     if (ret)

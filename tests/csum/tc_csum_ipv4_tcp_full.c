@@ -28,13 +28,14 @@ int tc_csum_ipv4_tcp_full(struct __sk_buff *skb)
     __u8  proto;
     __u16 dport;
     __u32 l3_off, l4_off;
-    int   is_fragment;
+    bool  is_fragment;
     int   ret;
+    __u16 ethertype;
 
     ret = bnt_eth__parse(skb, 0, &eth);
     if (ret)
         return TC_ACT_OK;
-    if (bnt_eth__get_ethertype(&eth) != ETH_P_IP)
+    if (bnt_eth__get_ethertype(&eth, &ethertype) || ethertype != ETH_P_IP)
         return TC_ACT_OK;
 
     ret = bnt_eth__next_off(&eth, &l3_off);
@@ -61,7 +62,7 @@ int tc_csum_ipv4_tcp_full(struct __sk_buff *skb)
     if (ret)
         return TC_ACT_OK;
 
-    ret = bnt_tcp__get_dest(&tcp, &dport);
+    ret = bnt_tcp__get_dport(&tcp, &dport);
     if (ret || dport != PORT_FROM)
         return TC_ACT_OK;
 
@@ -69,7 +70,7 @@ int tc_csum_ipv4_tcp_full(struct __sk_buff *skb)
     ret = bnt_ipv4__set_ttl_no_csum(&ip4, NEW_TTL);
     if (ret)
         return TC_ACT_SHOT;
-    ret = bnt_tcp__set_dest_no_csum(&tcp, PORT_TO);
+    ret = bnt_tcp__set_dport_no_csum(&tcp, PORT_TO);
     if (ret)
         return TC_ACT_SHOT;
 

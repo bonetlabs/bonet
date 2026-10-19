@@ -32,29 +32,22 @@ int xdp_fib6_forward(struct xdp_md *ctx)
     if (ret)
         return XDP_PASS;
 
-    /* fib_lookup() returning BNT_OK only means the lookup ran; is_success()
-     * is the separate check for whether it actually found a route. Checked
-     * before touching the hop limit so an unroutable packet is passed
-     * unchanged rather than decremented for nothing. */
+    /* BNT_OK means the lookup ran; is_success() means it found a route */
     ret = bnt_ipv6__fib_lookup(&ip6, &fib);
     if (ret)
         return XDP_PASS;
     if (!bnt_fib6__is_success(&fib))
         return XDP_PASS;
 
-    /* dec_hop_limit() overloads its return: non-zero means either "hop
-     * limit expired" (hop_limit_expired set, an expected outcome to drop
-     * on) or a real failure (hop_limit_expired clear). The ternary
-     * distinguishes the two, same as bnt_ipv4__dec_ttl() in
-     * xdp_fib4_forward.c. */
+    /* on failure, hop_limit_expired tells an expired hop limit from an error */
     ret = bnt_ipv6__dec_hop_limit(&ip6, &hop_limit_expired);
     if (ret)
         return hop_limit_expired ? XDP_DROP : XDP_ABORTED;
 
-    ret = bnt_eth__set_src(&eth, bnt_fib6__get_smac(&fib));
+    ret = bnt_eth__set_smac(&eth, bnt_fib6__get_smac(&fib));
     if (ret)
         return XDP_ABORTED;
-    ret = bnt_eth__set_dst(&eth, bnt_fib6__get_dmac(&fib));
+    ret = bnt_eth__set_dmac(&eth, bnt_fib6__get_dmac(&fib));
     if (ret)
         return XDP_ABORTED;
 
