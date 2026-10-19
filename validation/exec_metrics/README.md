@@ -21,7 +21,8 @@ For each run it records:
 
 Everything else comes from the kernel: whether each global loads, the
 verifier's numbers and the code sizes (`verifier_stats`), and the results of
-each case (`kernel_cases.py`).
+each case (`kernel_cases.py`). The same works for the whole workload programs (see
+[Workload programs](#workload-programs)).
 
 ## Checking the interpreter
 
@@ -61,7 +62,8 @@ MERLIN=~/src/Merlin \
 ./candidates.py results/objs
 ```
 
-Leave out `GCC_BPF` or `MERLIN` to skip them. For each configuration it writes
+Leave out `GCC_BPF` or `MERLIN` to skip them. `ONLY="g1 g2"` builds the case programs of
+those globals only, for a quick look after a change that touches a few. For each configuration it writes
 `<label>.o`, with every global, and `cases/<label>/`, the programs of
 `tests/units` built the same way. It checks that each global is the same code
 in both and lists the exceptions in `mismatch.txt`. `configs.txt` has one
@@ -107,6 +109,9 @@ With `-x` it also saves each program as the verifier translated it. The
 translated code calls helpers by kernel address, so the interpreter needs the
 addresses of the same boot: take `kallsyms.txt` right after, without
 rebooting.
+
+`-l DIR` saves the verifier log of each program that fails, as
+`DIR/<object>/<program>.log`.
 
 The columns are: whether it loaded and the verifier error; the verifier's
 processed instructions, states and time; the stack depth of the global; its
@@ -198,10 +203,45 @@ the candidates does not depend on the shipped asm.
 code must be the chosen configuration's (apart from the dropped `ja +0`), and
 its BTF must have global linkage and named parameters.
 
+## Workload programs
+
+The same interpreter runs the 14 XDP programs of `../framework` (or
+`../baseline`) on the packets of `workloads.py`, the whole program with the
+globals it calls. `progsim.py` loads a program from its object as libbpf
+would; the forwarding cases need `bpf_fib_lookup` to succeed, so the kernel
+runs them in a VM set up by `vm_net.sh`, and the interpreter returns the same
+result for the same routes (`workloads.FIB`).
+
+In the VM, as root (`make` builds `build/run_prog`):
+
+```bash
+IF=$(./vm_net.sh)
+for b in asm c; do build/verifier_stats -x results/wl-xlated/$b results/wl/$b/*.o; done
+grep -wE '__bpf_call_base|bpf_csum_diff|bpf_xdp_adjust_head|bpf_xdp_fib_lookup|bpf_xdp_redirect|bpf_map_lookup_elem|__htab_map_lookup_elem' \
+    /proc/kallsyms > results/wl-xlated/kallsyms.txt
+./workload_kernel.py asm=results/wl/asm c=results/wl/c > results/wl-kernel.tsv
+echo $IF
+```
+
+Then, anywhere:
+
+```bash
+./workload_metrics.py --kernel results/wl-kernel.tsv --xlated results/wl-xlated \
+    --ifindex $IF -o results/workloads.csv asm=results/wl/asm c=results/wl/c
+```
+
+Each row is a build and a case: the instructions executed by the whole
+program, by its own code and by the globals; loads, stores and multiplications;
+llvm-mca cycles; the same on the translated code; and whether the interpreter
+matches the kernel's action, packet and map entries. The verifier's numbers for
+the whole programs are in the `prog_*` columns of `verifier_stats`.
+
 ## Limits
 
-- `bpf_fib_lookup` is a stub that returns `BPF_FIB_LKUP_RET_FWD_DISABLED`, as
-  in the test VM, so only the paths up to the lookup are measured.
+- For the unit cases `bpf_fib_lookup` is a stub that returns
+  `BPF_FIB_LKUP_RET_FWD_DISABLED`, as in the test VM, so only the paths up to
+  the lookup are measured. For the workload programs it succeeds for the
+  routes of `workloads.FIB` and fails otherwise.
 - `bpf_csum_diff` folds the result to 16 bits, as kernel 7.0 does.
 - `ingress_ifindex` reads as 1; `data_meta` equals `data`. On the translated
   code the context is `struct xdp_buff` (kernel 7.0 layout), and the reads of

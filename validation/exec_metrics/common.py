@@ -53,7 +53,8 @@ def differences(g, a, b):
     return d
 
 
-HELPERS = [('bpf_csum_diff', 28), ('bpf_xdp_adjust_head', 44), ('bpf_xdp_fib_lookup', 69)]
+HELPERS = [('bpf_csum_diff', 28), ('bpf_xdp_adjust_head', 44), ('bpf_xdp_fib_lookup', 69),
+           ('bpf_xdp_redirect', 23), ('bpf_map_lookup_elem', 1), ('__htab_map_lookup_elem', 1001)]
 
 
 def xlated_helpers(xdir):

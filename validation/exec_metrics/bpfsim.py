@@ -15,12 +15,16 @@ verifier translated it (Xlated), and records:
   helper_bytes  bytes processed by bpf_csum_diff
   stack_max     deepest stack use of the active call chain, in bytes
   insns         the function's own executed instructions, raw, for mca.py
+  all_insns     every executed instruction, the called globals included
 
-It implements what the globals use: ALU/JMP/JMP32, memory loads and stores,
-calls between globals (r6-r9 and r10 preserved), and three helpers:
-bpf_csum_diff, bpf_xdp_adjust_head, and bpf_fib_lookup (stubbed: it returns the
-code the test VM gives, forwarding disabled). check_interpreter.py checks it
-against results recorded from the kernel.
+It implements what the globals and the workload programs use: ALU/JMP/JMP32,
+memory loads, stores and atomics, calls between functions (r6-r9 and r10
+preserved), and the helpers bpf_csum_diff, bpf_xdp_adjust_head,
+bpf_fib_lookup, bpf_map_lookup_elem (also as the verifier inlines it for a
+hash map) and bpf_redirect. bpf_fib_lookup returns the code the test VM gives,
+forwarding disabled, unless the object brings a result (progsim.Prog with
+fib). check_interpreter.py checks it against results recorded from the
+kernel.
 """
 import struct, collections
 
@@ -129,6 +133,12 @@ class Run:
         self.c = collections.Counter(); self.exec = 0; self.helper_bytes = 0
         self.own = collections.Counter(); self.own_exec = 0; self.calls = collections.Counter()
         self.insns = []  # the same, raw (code, dst, src, off, imm, imm2), for mca.py
+        self.all_insns = []  # every executed instruction, the called globals included
+        # A whole program (progsim.Prog) brings its data sections, map values,
+        # the values of its relocated LD_IMM64, its maps and a fib_lookup result.
+        for base, buf, kind in getattr(elf, 'regions', ()):
+            self.mem.add(base, buf, kind)
+        self.ldimm = getattr(elf, 'ldimm', {})
         self.kernel_ctx = getattr(elf, 'kernel_ctx', False)
         self.depth_used = [0]; self.stack_max = 0
         self.trace = None
@@ -176,8 +186,10 @@ class Run:
             code, regs, off, imm = struct.unpack_from('<BBhi', t, pc * 8)
             dst, src = regs & 0xf, regs >> 4
             cls = code & 7; self.exec += 1
+            ins = (code, dst, src, off, imm, struct.unpack_from('<i', t, pc * 8 + 12)[0] if code == 0x18 else 0)
+            self.all_insns.append(ins)
             if frame == 0:
-                self.insns.append((code, dst, src, off, imm, struct.unpack_from('<i', t, pc * 8 + 12)[0] if code == 0x18 else 0))
+                self.insns.append(ins)
             if self.trace is not None: self.trace.append((pc, list(r)))
             if cls in (4, 7):  # ALU / ALU64
                 op = code & 0xf0; is64 = cls == 7
@@ -212,9 +224,25 @@ class Run:
                 c['alu64' if is64 else 'alu32'] += 1; pc += 1; continue
             if cls == 0:  # LD_IMM64
                 lo = imm & M32; hi = struct.unpack_from('<i', t, pc * 8 + 12)[0] & M32
-                r[dst] = lo | (hi << 32); c['ldimm64'] += 1; pc += 2; continue
+                r[dst] = self.ldimm.get(pc, lo | (hi << 32)); c['ldimm64'] += 1; pc += 2; continue
             if cls in (1, 2, 3):
                 size = {0x00: 4, 0x08: 2, 0x10: 1, 0x18: 8}[code & 0x18]
+                if cls == 3 and (code & 0xe0) == 0xc0:  # atomic
+                    addr = (r[dst] + off) & M64
+                    old, kind = self.mem.load(addr, size)
+                    m = (1 << (8 * size)) - 1
+                    v = r[src] & m
+                    op = imm & ~1
+                    if op == 0xe0: new = v                                  # xchg
+                    elif op == 0xf0:                                        # cmpxchg
+                        new = v if old == r[0] & m else old
+                        r[0] = old
+                    else: new = {0x00: old + v, 0x40: old | v, 0x50: old & v, 0xa0: old ^ v}[op] & m
+                    self.mem.store(addr, size, new)
+                    if imm & 1 and op not in (0xe0, 0xf0): r[src] = old
+                    elif op == 0xe0: r[src] = old
+                    c['atomic_' + kind] += 1
+                    pc += 1; continue
                 if (code & 0xe0) != 0x60: raise RuntimeError(f'mode {code:#x}')
                 if cls == 1:
                     addr = (r[src] + off) & M64
@@ -288,8 +316,35 @@ class Run:
             nd = self.data + s32(r[2])
             if nd < PKT + 40 or nd > self.data_end - 14: return (-22) & M64
             self.data = nd; return 0
-        if hid == 69:  # bpf_fib_lookup: stub; the test VM has forwarding off (FWD_DISABLED)
-            return 5
+        if hid == 69:  # bpf_fib_lookup(ctx, params, plen, flags)
+            fib = getattr(self.elf, 'fib', None)
+            if fib is None:
+                return 5  # stub: the test VM has forwarding off (FWD_DISABLED)
+            # The routes the workload VM is set up with (fib['routes']: family,
+            # prefix bytes, prefix length); no route: BPF_FIB_LKUP_RET_NOT_FWDED.
+            fam = self.mem.load(r[2], 1)[0]
+            n = 4 if fam == 2 else 16
+            dst = bytes(self.mem.load(r[2] + 32 + i, 1)[0] for i in range(n))
+            bits = lambda b: ''.join(f'{x:08b}' for x in b)
+            if not any(f == fam and bits(dst)[:ln] == bits(pfx)[:ln] for f, pfx, ln in fib['routes']):
+                return 4
+            self.mem.store(r[2] + 8, 4, fib['ifindex'])
+            for i, b in enumerate(fib['smac'] + fib['dmac']):
+                self.mem.store(r[2] + 52 + i, 1, b)
+            return 0
+        if hid == 1001:  # __htab_map_lookup_elem: the verifier inlines a hash map lookup
+            # as this call followed by r0 += offsetof(htab_elem, key) + the
+            # rounded key size; return the element, so that r0 ends at the value
+            m = self.elf.maps[r[1]]
+            key = bytes(self.mem.load(r[2] + i, 1)[0] for i in range(m.key_size))
+            v = m.values.get(key, 0)
+            return v - (48 + (m.key_size + 7) // 8 * 8) if v else 0  # 48: offsetof(htab_elem, key) on 7.0
+        if hid == 1:  # bpf_map_lookup_elem(map, key)
+            m = self.elf.maps[r[1]]
+            key = bytes(self.mem.load(r[2] + i, 1)[0] for i in range(m.key_size))
+            return m.values.get(key, 0)
+        if hid == 23:  # bpf_redirect(ifindex, flags)
+            return 4 if r[2] == 0 else 0  # XDP_REDIRECT
         raise RuntimeError(f'helper {hid}')
 
     def metrics(self):

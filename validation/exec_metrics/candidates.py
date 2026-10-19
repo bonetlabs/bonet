@@ -17,6 +17,7 @@ Environment:
                (merlin_llvm.sh; LLVM_CONFIG picks the LLVM, default llvm-config-20)
   LEVELS       optimization levels (default "O1 O2 O3 Os Oz"; gcc has no Oz)
   OBJCOPY      strips DWARF from the case programs (default llvm-objcopy-20)
+  ONLY         build the case programs of these globals only (space-separated)
 
 Writes OUT_DIR/configs.txt, one LABEL=OBJ per line, for collect.py.
 """
@@ -51,6 +52,10 @@ subprocess.run(['make', '-s', '-C', f'{REPO}/tests/units', 'build/gen.stamp'], c
 globals_c = f'{REPO}/tests/globals/build/globals.c'
 gen = f'{REPO}/tests/units/build/gen'
 cases = sorted(int(f[5:-2]) for f in os.listdir(gen) if f.startswith('case_') and f.endswith('.c'))
+# ONLY: space-separated globals; the case programs of the others are not built
+if env.get('ONLY'):
+    only = set(env['ONLY'].split())
+    cases = [n for n in cases if CASES[n][0] in only]
 
 # label -> function(src, dst) that compiles src into dst
 configs = {}
