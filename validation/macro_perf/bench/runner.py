@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""PDR benchmark runner. Runs on the TRex machine, inside a run directory
+"""Benchmark runner. Runs on the TRex machine, inside a run directory
 prepared by ../remote.py (plan.json, objects, this directory).
 
 For every repetition, every (experiment, case) pair is measured once, in an
-order shuffled per repetition. Before each search the SUT output is checked
-against the expected packets; a wrong or missing output stops the run.
+order shuffled per repetition. Before each measurement the SUT output is
+checked against the expected packets; a wrong or missing output stops the run.
+The profile's method says what is measured: "pdr", a PDR search, or
+"runtime", the program's own run time per packet at fixed rates, from the
+kernel's BPF statistics.
 
 Writes, in the run directory:
-  trials.csv     every TRex trial
+  trials.csv     every TRex trial of the PDR searches
   searches.csv   one row per PDR search
+  runtime.csv    one row per runtime trial
   checks.csv     one row per correctness check
   progress.json  state for `remote.py status`
 """
@@ -32,12 +36,16 @@ import packets  # noqa: E402
 
 RUN_DIR = Path.cwd()
 PLAN: Dict[str, Any] = json.loads((RUN_DIR / "plan.json").read_text())
+METHOD = PLAN.get("method", "pdr")
 
 TRIAL_FIELDS = ["run_id", "time", "experiment", "case", "rep", "phase", "step",
                 "rate_pps", "trial", "kind", "duration_s", "tx_pkts", "rx_pkts",
                 "delivery_ratio", "rx_pps"]
 SEARCH_FIELDS = ["run_id", "experiment", "case", "rep", "order", "start", "end", "status",
                  "pdr_pps", "upper_pps", "lower_dr", "upper_dr", "steps", "trials"]
+RUNTIME_FIELDS = ["run_id", "time", "experiment", "case", "rep", "order", "rate_pps",
+                  "duration_s", "tx_pkts", "rx_pkts", "delivery_ratio", "run_cnt",
+                  "run_time_ns", "ns_per_pkt"]
 CHECK_FIELDS = ["run_id", "time", "experiment", "case", "rep", "verdict", "sent", "captured",
                 "forwarded", "matched", "model", "kernel_forwarded", "rx_cpu",
                 "prog_id", "prog_tag", "xlated_bytes", "jited_bytes", "detail"]
@@ -130,6 +138,12 @@ def sut_counters(env: Mapping[str, str]) -> Tuple[int, List[int]]:
         elif parts[0] == "rx_irqs":
             irqs = [int(value) for value in parts[1:]]
     return forwarded, irqs
+
+
+def sut_stats(env: Mapping[str, str]) -> Tuple[int, int]:
+    """run_time_ns and run_cnt of the attached program."""
+    values = dict(line.split() for line in sut("stats", env).splitlines() if line.strip())
+    return int(values["run_time_ns"]), int(values["run_cnt"])
 
 
 # --------------------------------------------------------------------------
@@ -318,6 +332,43 @@ def search(experiment: Mapping[str, Any], case: str, rep: int, order: int) -> No
         "upper_dr": f"{upper_dr:.6f}", "steps": steps, "trials": trials}))
 
 
+def runtime(experiment: Mapping[str, Any], case: str, rep: int, order: int,
+            env: Mapping[str, str]) -> None:
+    """The program's run time per packet at each rate of the profile: the
+    difference of the kernel's run_time_ns over the difference of run_cnt,
+    around one trial. The rows are written together at the end, so that a
+    resumed run repeats an interrupted measurement whole."""
+    cfg = dict(PLAN["runtime"])
+    cfg.update(experiment.get("runtime", {}))
+    duration = float(cfg["duration_s"])
+    warmup = float(cfg.get("warmup_s", 0))
+    pcap = PCAPS[experiment["name"]]
+    rows = []
+    sut("stats_on", env)
+    try:
+        for rate in cfg["rates_pps"]:
+            rate = float(rate)
+            if warmup:
+                trial(pcap, rate, warmup)
+            time0, count0 = sut_stats(env)
+            tx, rx = trial(pcap, rate, duration)
+            time1, count1 = sut_stats(env)
+            runs = count1 - count0
+            ns = (time1 - time0) / runs if runs else float("nan")
+            rows.append({"run_id": PLAN["run_id"], "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                         "experiment": experiment["name"], "case": case, "rep": rep,
+                         "order": order, "rate_pps": f"{rate:.1f}", "duration_s": duration,
+                         "tx_pkts": tx, "rx_pkts": rx,
+                         "delivery_ratio": f"{min(rx, tx) / tx if tx else 0.0:.6f}",
+                         "run_cnt": runs, "run_time_ns": time1 - time0, "ns_per_pkt": f"{ns:.2f}"})
+            log(f"runtime {experiment['name']}/{case} rep {rep}: {rate:,.0f} pps, "
+                f"{runs:,} runs, {ns:.1f} ns per packet, delivered {rx:,}/{tx:,}")
+    finally:
+        sut("stats_off", env)
+    for row in rows:
+        append_row("runtime.csv", RUNTIME_FIELDS, row)
+
+
 # --------------------------------------------------------------------------
 
 def schedule() -> List[Tuple[int, int, Mapping[str, Any], str]]:
@@ -325,11 +376,12 @@ def schedule() -> List[Tuple[int, int, Mapping[str, Any], str]]:
     experiments in a shuffled order, and within each the cases shuffled
     (the old runner's randomized block design)."""
     out = []
-    for rep in range(int(PLAN["pdr"]["repetitions"])):
+    for rep in range(int(PLAN["runtime" if METHOD == "runtime" else "pdr"]["repetitions"])):
         rng = random.Random(f"{PLAN['seed']}-{rep}")
         blocks = []
         for experiment in PLAN["experiments"]:
-            cases = list(experiment["cases"])
+            cases = [c for c in experiment["cases"]
+                     if METHOD != "runtime" or PLAN["cases"][c]["hook"] != "kernel"]
             rng.shuffle(cases)
             blocks.append([(experiment, case) for case in cases])
         rng.shuffle(blocks)
@@ -347,6 +399,7 @@ FRAMES: Dict[str, bytes] = {}
 
 def main() -> int:
     frame_size = int(PLAN["pdr"]["frame_size"])
+    results = "runtime.csv" if METHOD == "runtime" else "searches.csv"
     (RUN_DIR / "pcap").mkdir(exist_ok=True)
     for experiment in PLAN["experiments"]:
         frame = packets.traffic_frame(experiment, PLAN["net"], frame_size)
@@ -355,7 +408,7 @@ def main() -> int:
         PCAPS[experiment["name"]], FRAMES[experiment["name"]] = path, frame
 
     plan = schedule()
-    done = {(row["experiment"], row["case"], int(row["rep"])) for row in read_rows("searches.csv")}
+    done = {(row["experiment"], row["case"], int(row["rep"])) for row in read_rows(results)}
     todo = [item for item in plan if (item[2]["name"], item[3], item[0]) not in done]
     previous = json.loads((RUN_DIR / "progress.json").read_text()) \
         if (RUN_DIR / "progress.json").exists() else {}
@@ -363,7 +416,7 @@ def main() -> int:
     progress(status="running", pid=os.getpid(), total=len(plan), done=len(plan) - len(todo),
              started=previous.get("started", time.strftime("%Y-%m-%dT%H:%M:%S")),
              error=None, current=None)
-    log(f"run {PLAN['run_id']}: {len(todo)} of {len(plan)} searches to do")
+    log(f"run {PLAN['run_id']}: {len(todo)} of {len(plan)} measurements to do ({METHOD})")
 
     if not (RUN_DIR / "sut-info.txt").exists():
         (RUN_DIR / "sut-info.txt").write_text(sut("info"))
@@ -373,13 +426,16 @@ def main() -> int:
             # Every case, once, before spending hours on the searches.
             progress(current="initial checks")
             for experiment in PLAN["experiments"]:
-                for case in experiment["cases"]:
+                for case in sorted({c for _, _, e, c in plan if e is experiment}):
                     check(experiment, case, -1, prepare(experiment, case))
         for index, (rep, order, experiment, case) in enumerate(todo):
             progress(current=f"rep {rep} {experiment['name']}/{case}")
             env = prepare(experiment, case)
             check(experiment, case, rep, env)
-            search(experiment, case, rep, order)
+            if METHOD == "runtime":
+                runtime(experiment, case, rep, order, env)
+            else:
+                search(experiment, case, rep, order)
             elapsed = time.time() - started
             progress(done=len(plan) - len(todo) + index + 1,
                      eta_s=int(elapsed / (index + 1) * (len(todo) - index - 1)))

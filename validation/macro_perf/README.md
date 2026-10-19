@@ -18,6 +18,7 @@ testbed.yaml       machines, links, MACs, pinned queue/CPU (the only per-testbed
 profiles/          what to measure: build flags, cases, workloads, PDR method
   paper.yaml       Fig. 4: MMLF, DNAT, ENCAP x plain, inline, globals C, globals asm, kernel
   debug.yaml       paper.yaml with one short search each (~15 min)
+  runtime.yaml     run time of the program per packet, from bpf_stats (no PDR)
   legacy.yaml      the experiments of the old configs (IPv4/IPv6, encapsulations, TC)
 remote.py          the driver (below)
 report.py          per-run and cumulative reports
@@ -27,6 +28,26 @@ bench/             copied to the machines for each run
   packets.py       traffic and the expected output of each workload
 results/           runs (ignored by git)
 ```
+
+## Run time per packet
+
+`-p runtime` measures something else on the same setup: how long the XDP
+program itself runs per packet on the SUT, with the real NIC, cache and
+batching. There is no PDR search. For each workload and case, after the usual
+check, `kernel.bpf_stats_enabled` is turned on, TRex sends traffic at each rate
+of `runtime.rates_pps` (one rate below every PDR, so that all cases run at the
+same load), and `run_time_ns` and `run_cnt` of the attached program are read
+before and after the trial: their ratio is the time per packet, the globals
+included. The statistics cost two clock reads per run, so they are on only
+during these trials, never during a PDR search. The kernel case has no program
+and is left out.
+
+```bash
+./remote.py run -p runtime --note "run time per packet"   # about 40 minutes
+```
+
+The results go to `runtime.csv`, and the report gives the mean time per packet
+of each case with its 95% interval and its difference from the plain program.
 
 ## Testbed
 
@@ -117,6 +138,7 @@ Before every search, 64 packets are sent at 1 kpps and captured on TRex port 1:
 
 - `trials.csv`: every TRex trial (rate, tx/rx packets, delivery ratio, warm-up or measured)
 - `searches.csv`: every PDR search (result, final bounds, steps)
+- `runtime.csv`: every runtime trial (`-p runtime`: rate, tx/rx packets, run_cnt, run_time_ns)
 - `checks.csv`: every check, with the attached program's tag and sizes
 - `meta.json`, `plan.json`, `git.diff`, `objs/`: what was run, from which commit
 - `log.txt`, `sut-info.txt`

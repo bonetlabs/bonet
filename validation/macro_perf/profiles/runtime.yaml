@@ -1,0 +1,25 @@
+# Run time of the XDP program per packet on the SUT, from the kernel's BPF
+# statistics (kernel.bpf_stats_enabled), for the paper workloads and cases.
+# No PDR search: after the usual check, one trial per rate with the statistics
+# on; run_time_ns / run_cnt over the trial is the time per packet, the globals
+# included. The kernel case has no program and is left out.
+#
+# The rate is below every PDR of the paper run, so that every case runs at the
+# same load: the time per packet depends on it (batching, cache). About 40
+# minutes; each rate added to rates_pps adds about 15 s per measurement.
+
+include: paper.yaml
+
+method: runtime
+
+cases:
+  plain:       {label: Plain eBPF,         src: baseline,  hook: xdp}
+  inline:      {label: BONet Inline,       src: framework, hook: xdp, defines: [BNT_INLINE_ALL=1]}
+  globals-c:   {label: BONet Global (C),   src: framework, hook: xdp, defines: [BNT_ASM_GLOBALS=0]}
+  globals-asm: {label: BONet Global (asm), src: framework, hook: xdp}
+
+runtime:
+  repetitions: 10
+  rates_pps: [500000]
+  duration_s: 10
+  warmup_s: 2

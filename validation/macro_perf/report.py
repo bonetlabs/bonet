@@ -9,6 +9,8 @@ Per run, results/<run>/report/:
   summary.csv   one row per (workload, case): n, mean, std, 95% CI, deltas
   pdr.png/.pdf  Fig. 4 of the paper: mean PDR with 95% CI
   reps.png      every search, by repetition (drift, outliers)
+For a runtime run (method: runtime), summary.md and summary.csv give the
+program's run time per packet instead, with runtime.png/.pdf.
 
 results/REPORT.md, history.csv, history.png: every run, side by side.
 """
@@ -105,6 +107,8 @@ class Run:
         self.searches = read_csv(path / "searches.csv")
         self.checks = read_csv(path / "checks.csv")
         self.trials = read_csv(path / "trials.csv")
+        self.runtime = read_csv(path / "runtime.csv")
+        self.method = self.plan.get("method", "pdr")
         self.cases: List[str] = list(self.plan["cases"])
         self.experiments: List[str] = [e["name"] for e in self.plan["experiments"]]
         self.baseline = self.plan.get("baseline_case") or self.cases[0]
@@ -134,22 +138,35 @@ class Run:
 
     def delta(self, experiment: str, case: str, ref: str) -> Tuple[float, float]:
         """Mean difference case - ref in % of ref, with the Welch 95% CI half width."""
-        a, b = self.values(experiment, case), self.values(experiment, ref)
-        if len(a) < 1 or len(b) < 1:
-            return float("nan"), float("nan")
-        ma, mb = statistics.mean(a), statistics.mean(b)
-        d = 100 * (ma - mb) / mb
-        if len(a) < 2 or len(b) < 2:
-            return d, float("nan")
-        va, vb = statistics.variance(a) / len(a), statistics.variance(b) / len(b)
-        se = math.sqrt(va + vb)
-        if se == 0:
-            return d, 0.0
-        df = (va + vb) ** 2 / (va ** 2 / (len(a) - 1) + vb ** 2 / (len(b) - 1))
-        return d, 100 * t95(df) * se / mb
+        return welch(self.values(experiment, case), self.values(experiment, ref))
+
+    def ns(self, experiment: str, case: str, rate: str) -> List[float]:
+        """Run time per packet of every runtime trial of a case at a rate."""
+        return [float(r["ns_per_pkt"]) for r in self.runtime
+                if r["experiment"] == experiment and r["case"] == case and r["rate_pps"] == rate
+                and r["ns_per_pkt"] != "nan"]
+
+    def rates(self) -> List[str]:
+        return sorted({r["rate_pps"] for r in self.runtime}, key=float)
 
     def status(self) -> str:
         return self.progress.get("status", "unknown")
+
+
+def welch(a: Sequence[float], b: Sequence[float]) -> Tuple[float, float]:
+    """Mean difference a - b in % of b, with the Welch 95% CI half width."""
+    if len(a) < 1 or len(b) < 1:
+        return float("nan"), float("nan")
+    ma, mb = statistics.mean(a), statistics.mean(b)
+    d = 100 * (ma - mb) / mb
+    if len(a) < 2 or len(b) < 2:
+        return d, float("nan")
+    va, vb = statistics.variance(a) / len(a), statistics.variance(b) / len(b)
+    se = math.sqrt(va + vb)
+    if se == 0:
+        return d, 0.0
+    df = (va + vb) ** 2 / (va ** 2 / (len(a) - 1) + vb ** 2 / (len(b) - 1))
+    return d, 100 * t95(df) * se / mb
 
 
 def color(case: str, index: int) -> str:
@@ -242,7 +259,8 @@ def summary_rows(run: Run) -> List[Dict[str, Any]]:
 
 
 def duration(run: Run) -> str:
-    times = [r["start"] for r in run.searches] + [r["end"] for r in run.searches]
+    times = [r["start"] for r in run.searches] + [r["end"] for r in run.searches] + \
+        [r["time"] for r in run.runtime]
     if not times:
         return "–"
     import datetime as dt
@@ -250,41 +268,33 @@ def duration(run: Run) -> str:
     return f"{(last - first).total_seconds() / 3600:.1f} h"
 
 
-def run_report(run: Run) -> None:
-    out = run.path / "report"
-    out.mkdir(exist_ok=True)
-    rows = summary_rows(run)
-    write_csv(out / "summary.csv", rows, SUMMARY_FIELDS)
-    have_data = any(r.get("n") for r in rows)
-    if have_data:
-        plot_pdr(run, out)
-        plot_reps(run, out)
-
+def header_lines(run: Run, unit: str, method: str) -> List[str]:
+    """Title, note, status, provenance and method of a run's summary.md."""
     m, p = run.meta, run.progress
     sut_info = (run.path / "sut-info.txt").read_text().strip().splitlines() \
         if (run.path / "sut-info.txt").exists() else []
-    pdr = run.plan["pdr"]
     lines = [f"# Run {run.id}", ""]
     if m.get("note"):
         lines += [m["note"], ""]
     lines += [
-        f"- status: **{run.status()}**, {p.get('done', 0)}/{p.get('total', '?')} searches, "
+        f"- status: **{run.status()}**, {p.get('done', 0)}/{p.get('total', '?')} {unit}, "
         f"measured over {duration(run)}",
         f"- profile: `{run.plan['profile']}`; commit `{m.get('git_describe', '?')}`"
         + (" (uncommitted changes, see git.diff)" if m.get("git_dirty") else ""),
         f"- compiler: {m.get('compiler', '?')}, flags `{' '.join(m.get('profile', {}).get('build', {}).get('cflags', []))}`",
         f"- SUT: {', '.join(sut_info)}",
         f"- TRex host: {', '.join(m.get('trex_host', []))}",
-        f"- method: PDR at delivery ratio {pdr['delivery_ratio']}, {pdr['frame_size']}-byte frames, "
-        f"{pdr['duration_s']} s trials ({pdr['warmup_trials']} warm-up + {pdr['samples']} measured "
-        f"per rate), search {pdr['start_pps']:,}–{pdr['max_pps']:,} pps to a "
-        f"{pdr['window_pps']:,} pps window, {pdr['repetitions']} repetitions in shuffled order; "
-        f"RX on one queue pinned to CPU {run.plan['sut']['rx_cpu']}",
+        f"- method: {method}",
         "",
     ]
     if p.get("error"):
         lines += ["## Error", "", "```", str(p["error"]).strip(), "```", ""]
+    return lines
 
+
+def checks_lines(run: Run) -> List[str]:
+    """The checks section: failures, or the count of passes, and the programs."""
+    lines: List[str] = []
     failed = [c for c in run.checks if c["verdict"] != "pass"]
     lines += ["## Checks", ""]
     if not run.checks:
@@ -295,7 +305,7 @@ def run_report(run: Run) -> None:
             lines += [f"- {c['experiment']}/{c['case']} rep {c['rep']}:", "", "```",
                       c["detail"].strip(), "```", ""]
     else:
-        lines += [f"All {len(run.checks)} checks passed: before every search, "
+        lines += [f"All {len(run.checks)} checks passed: before every measurement, "
                   f"{run.plan['check']['packets']} packets came back exactly as the workload's "
                   "model says, through the XDP path (or the kernel for the kernel case), with the "
                   "RX interrupts on the pinned CPU.", ""]
@@ -309,6 +319,139 @@ def run_report(run: Run) -> None:
         for (exp, case), (x, j, tag) in sorted(progs.items()):
             lines.append(f"| {exp} | {run.label(case)} | {x} | {j} | `{tag}` |")
         lines.append("")
+
+    return lines
+
+
+RUNTIME_SUMMARY_FIELDS = ["run_id", "experiment", "case", "label", "rate_pps", "n", "mean_ns",
+                          "std_ns", "ci95_ns", "min_ns", "max_ns", "min_delivery_ratio",
+                          "vs_baseline_pct", "vs_baseline_ci95_pct",
+                          "vs_globals_c_pct", "vs_globals_c_ci95_pct"]
+
+
+def runtime_rows(run: Run) -> List[Dict[str, Any]]:
+    rows = []
+    for rate in run.rates():
+        for exp in run.experiments:
+            for case in run.cases:
+                values = run.ns(exp, case, rate)
+                if not values:
+                    continue
+                n = len(values)
+                mean = statistics.mean(values)
+                std = statistics.stdev(values) if n > 1 else 0.0
+                dr = [float(r["delivery_ratio"]) for r in run.runtime if r["experiment"] == exp
+                      and r["case"] == case and r["rate_pps"] == rate]
+                row = {"run_id": run.id, "experiment": exp, "case": case, "label": run.label(case),
+                       "rate_pps": rate, "n": n, "mean_ns": mean, "std_ns": std,
+                       "ci95_ns": t95(n - 1) * std / math.sqrt(n) if n > 1 else float("nan"),
+                       "min_ns": min(values), "max_ns": max(values), "min_delivery_ratio": min(dr)}
+                for ref, key in ((run.baseline, "vs_baseline"), ("globals-c", "vs_globals_c")):
+                    if ref in run.cases and ref != case:
+                        row[f"{key}_pct"], row[f"{key}_ci95_pct"] = welch(values, run.ns(exp, ref, rate))
+                rows.append(row)
+    return rows
+
+
+def plot_runtime(run: Run, rows: List[Dict[str, Any]], rate: str, out: Path) -> None:
+    exps, cases = run.experiments, [c for c in run.cases if any(r["case"] == c for r in rows)]
+    width = 0.8 / len(cases)
+    fig, ax = plt.subplots(figsize=(max(6.5, 2.2 * len(exps)), 3.4))
+    for i, case in enumerate(cases):
+        xs, ys, errs = [], [], []
+        for j, exp in enumerate(exps):
+            r = next((r for r in rows if r["experiment"] == exp and r["case"] == case
+                      and r["rate_pps"] == rate), None)
+            if r is None:
+                continue
+            xs.append(j - 0.4 + width * (i + 0.5))
+            ys.append(r["mean_ns"])
+            errs.append(0 if math.isnan(r["ci95_ns"]) else r["ci95_ns"])
+        bars = ax.bar(xs, ys, width * 0.92, yerr=errs, capsize=3, color=color(case, i),
+                      edgecolor="#333333", linewidth=0.6, label=run.label(case),
+                      error_kw={"elinewidth": 0.9, "ecolor": "#222222"})
+        for bar, y, err in zip(bars, ys, errs):
+            ax.text(bar.get_x() + bar.get_width() / 2, y + err + 1, f"{y:.0f}", ha="center",
+                    va="bottom", fontsize=6.5, color="#333333")
+    ax.set_xticks(range(len(exps)), exps)
+    ax.set_ylabel("program run time (ns/packet)")
+    style(ax)
+    ax.set_ylim(0, ax.get_ylim()[1] * 1.12)
+    ax.legend(ncol=len(cases), loc="upper center", bbox_to_anchor=(0.5, 1.2), frameon=False,
+              fontsize=8, handlelength=1.2, columnspacing=1.0)
+    fig.tight_layout()
+    name = f"runtime-{float(rate) / 1e3:.0f}kpps"
+    fig.savefig(out / f"{name}.png", dpi=200)
+    fig.savefig(out / f"{name}.pdf")
+    plt.close(fig)
+
+
+def runtime_report(run: Run) -> None:
+    out = run.path / "report"
+    out.mkdir(exist_ok=True)
+    rows = runtime_rows(run)
+    write_csv(out / "summary.csv", rows, RUNTIME_SUMMARY_FIELDS)
+    cfg = run.plan["runtime"]
+    lines = header_lines(
+        run, "measurements",
+        f"run time of the attached program from the kernel's BPF statistics "
+        f"(kernel.bpf_stats_enabled, on only during the measured trials): run_time_ns / run_cnt "
+        f"over one {cfg['duration_s']} s trial per rate ({cfg.get('warmup_s', 0)} s of traffic "
+        f"before it), {run.plan['pdr']['frame_size']}-byte frames, {cfg['repetitions']} "
+        f"repetitions in shuffled order; RX on one queue pinned to CPU {run.plan['sut']['rx_cpu']}")
+    lines += checks_lines(run)
+    show_c = "globals-c" in run.cases and run.baseline != "globals-c"
+    for rate in run.rates():
+        plot_runtime(run, rows, rate, out)
+        name = f"runtime-{float(rate) / 1e3:.0f}kpps"
+        lines += [f"## Run time at {float(rate) / 1e3:,.0f} kpps", "", f"![run time]({name}.png)", "",
+                  f"| workload | case | n | mean ns | ±95% CI | delivered | vs {run.label(run.baseline)} |"
+                  + (" vs Global (C) |" if show_c else ""),
+                  "|---|---|---:|---:|---:|---:|---:|" + ("---:|" if show_c else "")]
+        for r in rows:
+            if r["rate_pps"] != rate:
+                continue
+            vb = "" if r["case"] == run.baseline else pm(r.get("vs_baseline_pct"), r.get("vs_baseline_ci95_pct"))
+            line = (f"| {r['experiment']} | {r['label']} | {r['n']} | {fmt(r['mean_ns'], 1)} | "
+                    f"{fmt(r['ci95_ns'], 1)} | {fmt(100 * r['min_delivery_ratio'], 2)}% | {vb} |")
+            if show_c:
+                line += " " + ("" if r["case"] == "globals-c" else
+                               pm(r.get("vs_globals_c_pct"), r.get("vs_globals_c_ci95_pct"))) + " |"
+            lines.append(line)
+        lines += ["", "Positive deltas mean a longer run time. \"delivered\" is the lowest delivery "
+                  "ratio of the trials: the time is per program run (run_cnt), so it holds below "
+                  "100% too, but then the load was not the nominal rate.", ""]
+    lines += ["## Files", "",
+              "- `../runtime.csv`: every trial (rate, tx/rx packets, run_cnt, run_time_ns)",
+              "- `../checks.csv`: every correctness check",
+              "- `summary.csv`: the tables above",
+              "- `../meta.json`, `../plan.json`: configuration, commit, object hashes",
+              "- `../objs/`: the objects measured; `../log.txt`: the runner's log", ""]
+    (out / "summary.md").write_text("\n".join(lines))
+
+
+def run_report(run: Run) -> None:
+    if run.method == "runtime":
+        runtime_report(run)
+        return
+    out = run.path / "report"
+    out.mkdir(exist_ok=True)
+    rows = summary_rows(run)
+    write_csv(out / "summary.csv", rows, SUMMARY_FIELDS)
+    have_data = any(r.get("n") for r in rows)
+    if have_data:
+        plot_pdr(run, out)
+        plot_reps(run, out)
+
+    pdr = run.plan["pdr"]
+    lines = header_lines(
+        run, "searches",
+        f"PDR at delivery ratio {pdr['delivery_ratio']}, {pdr['frame_size']}-byte frames, "
+        f"{pdr['duration_s']} s trials ({pdr['warmup_trials']} warm-up + {pdr['samples']} measured "
+        f"per rate), search {pdr['start_pps']:,}–{pdr['max_pps']:,} pps to a "
+        f"{pdr['window_pps']:,} pps window, {pdr['repetitions']} repetitions in shuffled order; "
+        f"RX on one queue pinned to CPU {run.plan['sut']['rx_cpu']}")
+    lines += checks_lines(run)
 
     show_c = "globals-c" in run.cases and run.baseline != "globals-c"
     if have_data:

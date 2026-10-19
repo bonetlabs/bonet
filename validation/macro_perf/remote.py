@@ -64,9 +64,7 @@ def load_profile(name: str) -> Dict[str, Any]:
     data = load_yaml(path)
     if "include" in data:
         data = merge(load_profile(str(path.parent / data.pop("include"))), data)
-    data.setdefault("name", path.stem)
-    if not name.endswith(".yaml"):
-        data["name"] = name
+    data["name"] = path.stem if name.endswith(".yaml") else name
     return data
 
 
@@ -475,7 +473,9 @@ def cmd_run(args: argparse.Namespace) -> None:
                  "api_path": f"{t['trex_dir']}/automation/trex_control_plane/interactive"},
         "sut": {"ssh": f"{tb['sut']['user']}@{tb['sut']['control']['sut_ip']}", "dir": dirs["sut"],
                 "rx_queue": tb["sut"]["rx_queue"], "rx_cpu": tb["sut"]["rx_cpu"]},
+        "method": profile.get("method", "pdr"),
         "pdr": profile["pdr"],
+        "runtime": profile.get("runtime"),
         "check": profile["check"],
         "cases": profile["cases"],
         "baseline_case": profile.get("baseline_case"),
@@ -535,7 +535,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     eta = p.get("eta_s")
     eta_text = f", about {eta / 3600:.1f} h left" if eta else ""
     print(f"{run_id}: {p.get('status', 'not started')} ({'running' if alive else 'no runner'}), "
-          f"{p.get('done', 0)}/{p.get('total', '?')} searches{eta_text}")
+          f"{p.get('done', 0)}/{p.get('total', '?')} measurements{eta_text}")
     if p.get("current"):
         print(f"  now: {p['current']}")
     if p.get("error"):
@@ -544,8 +544,8 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(out(tb["trex"]["ssh"], f"tail -n {args.lines} {rdir}/log.txt 2>/dev/null; true"))
 
 
-FETCHED = ["plan.json", "progress.json", "log.txt", "trials.csv", "searches.csv", "checks.csv",
-           "sut-info.txt", "pcap"]
+FETCHED = ["plan.json", "progress.json", "log.txt", "trials.csv", "searches.csv", "runtime.csv",
+           "checks.csv", "sut-info.txt", "pcap"]
 
 
 def fetch(tb: Mapping[str, Any], run_id: str) -> None:
@@ -565,7 +565,12 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         status = json.loads((RESULTS / run_id / "progress.json").read_text()).get("status") \
             if (RESULTS / run_id / "progress.json").exists() else None
         print(f"{run_id}: {status}")
-        if not args.wait or status != "running" or not runner_alive(tb, run_id):
+        if not args.wait or status != "running":
+            break
+        if not runner_alive(tb, run_id):
+            # it ended after this fetch: take what it wrote last
+            fetch(tb, run_id)
+            report(run_id)
             break
         time.sleep(args.every * 60)
 

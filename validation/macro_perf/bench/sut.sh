@@ -4,6 +4,8 @@
 #   sut.sh prepare   configure forwarding and attach the case (HOOK, OBJ, KERNEL_SETUP)
 #   sut.sh counters  kernel-forwarded packets and RX interrupts per CPU
 #   sut.sh prog      the attached XDP/TC program, as bpftool JSON
+#   sut.sh stats_on, stats_off   kernel.bpf_stats_enabled
+#   sut.sh stats     run_time_ns and run_cnt of the attached program
 #   sut.sh info      machine description for the run metadata
 #   sut.sh clean     undo prepare
 #
@@ -170,6 +172,16 @@ prog() {
     if [[ -n "${id}" ]]; then bpftool -j prog show id "${id}"; else echo '{}'; fi
 }
 
+# Per-program run time and run count, kept by the kernel while
+# kernel.bpf_stats_enabled is 1 (it costs two clock reads per run, so it is on
+# only around the runtime trials).
+stats_on() { sysctl -qw kernel.bpf_stats_enabled=1; }
+stats_off() { sysctl -qw kernel.bpf_stats_enabled=0; }
+
+stats() {
+    prog | python3 -c 'import json,sys; d=json.load(sys.stdin); print("run_time_ns", d.get("run_time_ns", 0)); print("run_cnt", d.get("run_cnt", 0))'
+}
+
 info() {
     echo "kernel: $(uname -r)"
     echo "os: $(. /etc/os-release; echo "${PRETTY_NAME}")"
@@ -182,6 +194,7 @@ info() {
 }
 
 clean() {
+    stats_off
     detach_all
     kernel_state_clean
     ethtool -X "${RX}" default >/dev/null 2>&1 || true
@@ -196,6 +209,9 @@ case "${ACTION}" in
     prepare) prepare ;;
     counters) counters ;;
     prog) prog ;;
+    stats_on) stats_on ;;
+    stats_off) stats_off ;;
+    stats) stats ;;
     info) info ;;
     clean) clean ;;
     *) sed -n '2,10p' "$0"; exit 2 ;;
