@@ -19,6 +19,10 @@ ip neigh add 10.9.0.2 lladdr 02:00:00:00:02:02 dev v0 nud permanent
 ip -6 neigh add fd09::2 lladdr 02:00:00:00:02:02 dev v0 nud permanent
 for n in 48.0.0.0/8 10.7.0.0/16; do ip route add $n via 10.9.0.2 dev v0; done
 for n in fd03::/16 fd07::/16; do ip -6 route add $n via fd09::2 dev v0; done
+# The DNAT targets as host routes too: on a machine where 10.7.0.0/24 or
+# fd07::/64 is on a real interface (the macro_perf SUT), they would win.
+ip route add 10.7.0.1/32 via 10.9.0.2 dev v0
+ip -6 route add fd07::1/128 via fd09::2 dev v0
 sysctl -qw net.ipv4.conf.v0.forwarding=1 net.ipv6.conf.v0.forwarding=1
 [ -n "$1" ] && ip link set dev v1 xdp obj "$1" sec xdp
 cat /sys/class/net/v0/ifindex
