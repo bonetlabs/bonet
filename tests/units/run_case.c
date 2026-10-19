@@ -16,7 +16,7 @@ struct bnt_case_res {
     int ret;
 } __attribute__((aligned(8)));
 
-static char logbuf[1 << 20];
+static char logbuf[1 << 24];  /* kernels before 6.4 fail the load when the log fills up */
 
 static int quiet(enum libbpf_print_level l, const char *f, va_list a)
 {

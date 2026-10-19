@@ -909,12 +909,51 @@ static __always_inline int bnt_ipv4__set_hlen_no_csum(bnt_ipv4 *ip, __u32 hlen)
  */
 #define __BNT_SHIFT_LINKAGE static __always_inline
 
+/*
+ * Loop bound for the prefix copy of the fixed-size inserts. In global mode
+ * prefix_len is not a constant, and with 32-bit compares (-mcpu=v3) each exit
+ * of the copy loop narrows it to a different range; since the insert global
+ * uses prefix_len after the loop, the verifier cannot merge the exits and
+ * walks the rest of the global once per exit (up to BNT_XDP_MAX_HEADER_PREFIX
+ * times). Comparing against a copy made by an AND, which the verifier does not
+ * link to prefix_len, leaves prefix_len untouched. The AND is a no-op
+ * (prefix_len <= the prefix limit). The variable-size shift uses the 32-bit
+ * form below; the removes do not need it.
+ */
+#if BNT_INLINE_ALL
+/* 32-bit, as prefix_len: with a 64-bit bound clang turns the inline copy into a memmove call */
+typedef __u32 __bnt_copy_limit_t;
+#define __BNT_COPY_LIMIT(x) (x)
+#define __BNT_COPY_LIMIT32(x) (x)
+#else
+typedef __u64 __bnt_copy_limit_t;
+static __always_inline __u64 __BNT_COPY_LIMIT(__u64 x)
+{
+    asm volatile("%0 &= 0xffff" : "+r"(x));
+    return x;
+}
+
+/* The same on a 32-bit subregister, for the copy through the stack buffer:
+ * with the 64-bit form clang zero-extends the bound with two shifts per loop.
+ * gcc has no "w" constraint. */
+static __always_inline __u32 __BNT_COPY_LIMIT32(__u32 x)
+{
+#ifdef __clang__
+    asm volatile("%0 &= 0xffff" : "+w"(x));
+#else
+    asm volatile("%0 &= 0xffff" : "+r"(x));
+#endif
+    return x;
+}
+#endif
+
 __BNT_SHIFT_LINKAGE int __bnt_shift_insert(struct xdp_md *ctx,
                                                    __u32 prefix_len, __u32 n)
 {
-    __u8 buf[BNT_XDP_MAX_HEADER_PREFIX];
+    __u8 buf[BNT_XDP_MAX_HEADER_PREFIX] __attribute__((aligned(8)));
     void *data, *data_end;
     __u32 i;
+    __u32 lim;
 
     if (!ctx)
         return BNT_ERR_BAD_ARG;
@@ -925,11 +964,18 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_insert(struct xdp_md *ctx,
     data_end = __bnt_xdp_data_end(ctx);
     if ((__u8 *)data + BNT_XDP_MAX_HEADER_PREFIX > (__u8 *)data_end)
         return BNT_ERR_TRUNC;
-    for (i = 0; i < BNT_XDP_MAX_HEADER_PREFIX; i++) {
-        if (i >= prefix_len)
-            break;
+    /* Save the whole prefix area, not just prefix_len bytes: no exit that
+     * depends on prefix_len (see __BNT_COPY_LIMIT), and every byte of buf is
+     * written, so the copy back may read up to any prefix_len. */
+#if BNT_STRICT_ALIGN
+    for (i = 0; i < BNT_XDP_MAX_HEADER_PREFIX; i++)
         buf[i] = *((__u8 *)data + i);
-    }
+#else
+    for (i = 0; i + 8 <= BNT_XDP_MAX_HEADER_PREFIX; i += 8)
+        *(__u64 *)(buf + i) = *(__u64 *)((__u8 *)data + i);
+    for (; i < BNT_XDP_MAX_HEADER_PREFIX; i++)
+        buf[i] = *((__u8 *)data + i);
+#endif
 
     if (bpf_xdp_adjust_head(ctx, -(int)n))
         return BNT_ERR_WRITE;
@@ -938,8 +984,9 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_insert(struct xdp_md *ctx,
     data_end = __bnt_xdp_data_end(ctx);
     if ((__u8 *)data + BNT_XDP_MAX_HEADER_PREFIX > (__u8 *)data_end)
         return BNT_ERR_TRUNC;
+    lim = __BNT_COPY_LIMIT32(prefix_len);
     for (i = 0; i < BNT_XDP_MAX_HEADER_PREFIX; i++) {
-        if (i >= prefix_len)
+        if (i >= lim)
             break;
         *((__u8 *)data + i) = buf[i];
     }
@@ -990,6 +1037,7 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_insert_##N(struct xdp_md *ctx,            \
     void *data, *data_end;                                                       \
     __u8 *shifted;                                                                \
     __u32 i;                                                                     \
+    __bnt_copy_limit_t lim;                                                      \
     if (!ctx)                                                                    \
         return BNT_ERR_BAD_ARG;                                                \
     if (prefix_len > BNT_XDP_MAX_HEADER_PREFIX)                                \
@@ -1001,8 +1049,9 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_insert_##N(struct xdp_md *ctx,            \
     shifted  = (__u8 *)data + (N);                                               \
     if ((__u8 *)data + BNT_XDP_MAX_HEADER_PREFIX + (N) > (__u8 *)data_end)    \
         return BNT_ERR_TRUNC;                                                  \
+    lim = __BNT_COPY_LIMIT(prefix_len);                                          \
     for (i = 0; i < BNT_XDP_MAX_HEADER_PREFIX; i++) {                         \
-        if (i >= prefix_len)                                                     \
+        if (i >= lim)                                                            \
             break;                                                               \
         *((__u8 *)data + i) = *(shifted + i);                                   \
     }                                                                             \
@@ -1236,7 +1285,7 @@ static __always_inline int bnt_eth__remove_vlan(bnt_eth *eth)
     return __bnt_eth_remove_vlan_g(eth->__ctx, eth->__off);
 #else
     {
-        __be16 encap;
+        __be16 encap = 0;
         __u32 vlan_off;
         __u16 outer_proto;
         int ret;
@@ -1310,9 +1359,10 @@ int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
     if (ret)
         return ret;
 
-#if BNT_LEGACY_KERNEL || (__clang_major__ >= 17 && __clang_major__ <= 19) || __clang_major__ == 21
-    BNT_PIN(prefix_len);     /* clang 17,18,19,21 */
-#endif
+    /* Keeps the bounds check of __bnt_data_ptr below: clang knows prefix_len
+     * <= BNT_XDP_MAX_HEADER_PREFIX and drops it, and kernels up to 6.6 lose
+     * that bound across the spill around bpf_xdp_adjust_head. */
+    BNT_PIN(prefix_len);
     ret = __bnt_data_ptr(ctx, prefix_len, sizeof(*ip), (void **)&ip);
     if (ret)
         return ret;
@@ -1487,9 +1537,7 @@ int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
         return ret;
 
     /* write the base header; barrier re-materializes prefix_len post-adjust */
-#if BNT_LEGACY_KERNEL || (__clang_major__ >= 17 && __clang_major__ <= 19) || __clang_major__ == 21
-    BNT_PIN(prefix_len);     /* clang 17,18,19,21 */
-#endif
+    BNT_PIN(prefix_len);     /* see __bnt_eth_insert_ipv4_g */
     ret = __bnt_data_ptr(ctx, prefix_len, sizeof(*ip), (void **)&ip);
     if (ret)
         return ret;
@@ -1720,7 +1768,7 @@ static __always_inline int bnt_eth__remove_ipv4(bnt_eth *eth)
     {
         struct __bnt_eth_meta meta;
         __u32 prefix_len;
-        __u8 vihl, proto;
+        __u8 vihl = 0, proto = 0;
         int ret;
 
         ret = __bnt_eth_meta(eth, &meta);
@@ -1866,7 +1914,7 @@ static __always_inline int bnt_eth__remove_ipv6(bnt_eth *eth)
     {
         struct __bnt_eth_meta meta;
         __u32 prefix_len;
-        __u8 ver, nexthdr;
+        __u8 ver = 0, nexthdr = 0;
         int ret;
 
         ret = __bnt_eth_meta(eth, &meta);
@@ -2237,9 +2285,7 @@ int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
         return ret;
 
     /* write the IPv6 base header + SRH base; barrier re-materializes off */
-#if BNT_LEGACY_KERNEL || (__clang_major__ >= 16 && __clang_major__ <= 19)
-    BNT_PIN(off);     /* clang 16,17,18,19 */
-#endif
+    BNT_PIN(off);     /* see __bnt_eth_insert_ipv4_g */
     ret = __bnt_data_ptr(ctx, off,
                           sizeof(struct ipv6hdr) + sizeof(struct bnt_sr_hdr), &base);
     if (ret)
@@ -2280,9 +2326,7 @@ int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
 #endif
         rev &= (__u8)(BNT_SRV6_MAX_SEGS - 1u);
         so = segs_off + i * (__u32)sizeof(struct in6_addr);
-#if BNT_LEGACY_KERNEL || __clang_major__ == 18 || __clang_major__ == 19
-        BNT_PIN(so);     /* clang 18,19: per-segment derived offset */
-#endif
+        BNT_PIN(so);     /* keeps the bounds check on so, as on off above */
         ret = __bnt_data_ptr(ctx, so, sizeof(struct in6_addr), (void **)&sp);
         if (ret)
             return ret;
@@ -2328,7 +2372,7 @@ static __always_inline int bnt_ipv6__insert_srh(bnt_ipv6 *ip6,
         /* One global for the whole operation. Copy the (possibly rodata) segment
          * list to a writable stack buffer first (a global's pointer arg is assumed
          * writable). */
-        struct __bnt_srv6_segs segbuf;
+        struct __bnt_srv6_segs segbuf = {};
         __u32 i;
 
         for (i = 0; i < BNT_SRV6_MAX_SEGS; i++)
@@ -2504,9 +2548,7 @@ int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc,
     if (ret)
         return ret;
 
-#if BNT_LEGACY_KERNEL || (__clang_major__ >= 17 && __clang_major__ <= 19) || __clang_major__ == 21
-    BNT_PIN(prefix_len);     /* clang 17,18,19,21 */
-#endif
+    BNT_PIN(prefix_len);     /* see __bnt_eth_insert_ipv4_g */
     ret = __bnt_data_ptr(ctx, prefix_len, sizeof(__be32), &p);
     if (ret)
         return ret;

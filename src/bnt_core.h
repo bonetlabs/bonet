@@ -1022,7 +1022,7 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_eth_next_off_g(BNT_CTX_TYP
 #if !BNT_ASM_GLOBALS
 __attribute__((noinline, weak, nonnull(1))) int __bnt_eth_next_off_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 *out)
 {
-    __be16 proto;
+    __be16 proto = 0;
     __u32 hlen;
     __u32 i;
     int ret;
@@ -1162,8 +1162,8 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_ipv6_next_off_g(BNT_CTX_TY
 #if !BNT_ASM_GLOBALS
 __attribute__((noinline, weak, nonnull(1))) int __bnt_ipv6_next_off_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 *out)
 {
-    __u8 first;
-    __u8 nexthdr;
+    __u8 first = 0;
+    __u8 nexthdr = 0;
     __u32 cur;
     __u32 i;
     int ret;
@@ -1186,8 +1186,8 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_ipv6_next_off_g(BNT_CTX_TY
     cur = off + sizeof(struct ipv6hdr);   /* off + 40 */
 
     for (i = 0; i < BNT_MAX_IPV6_EXT_DEPTH; i++) {
-        __u8 ext_nh;
-        __u8 ext_hlen;
+        __u8 ext_nh = 0;
+        __u8 ext_hlen = 0;
         __u32 ext_len;
 
         if (!__bnt_is_ipv6_ext(nexthdr))
@@ -1198,7 +1198,7 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_ipv6_next_off_g(BNT_CTX_TY
             return ret;
 
         if (nexthdr == NEXTHDR_FRAGMENT) {
-            __be16 frag_flags;
+            __be16 frag_flags = 0;
             ret = __bnt_read_be16_g(ctx, cur + 2, &frag_flags);
             if (ret)
                 return ret;
@@ -1234,8 +1234,8 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_tcp_next_off_g(BNT_CTX_TYP
 #if !BNT_ASM_GLOBALS
 __attribute__((noinline, weak, nonnull(1))) int __bnt_tcp_next_off_g(BNT_CTX_TYPE *ctx, __u32 off, __u32 *out)
 {
-    __u8 doff_flags0;
-    __u8 dummy;
+    __u8 doff_flags0 = 0;
+    __u8 dummy = 0;
     __u32 hlen;
     int ret;
 
@@ -1294,8 +1294,8 @@ static __always_inline int __bnt_eth_fill_meta(BNT_CTX_TYPE *ctx, __u32 off,
     cur  = off + sizeof(struct ethhdr);
 
     for (i = 0; i < BNT_MAX_VLAN_DEPTH; i++) {
-        __be16 tci;
-        __be16 encap;
+        __be16 tci = 0;
+        __be16 encap = 0;
 
         if (proto != bpf_htons(ETH_P_8021Q) && proto != bpf_htons(ETH_P_8021AD))
             break;
@@ -1378,8 +1378,8 @@ static __always_inline int __bnt_ipv6_fill_meta(BNT_CTX_TYPE *ctx, __u32 off,
     }
 
     for (i = 0; i < BNT_MAX_IPV6_EXT_DEPTH; i++) {
-        __u8 ext0;
-        __u8 ext1;
+        __u8 ext0 = 0;
+        __u8 ext1 = 0;
         __u32 ext_len;
 
         /* The fast path above already tested the first next header. */
@@ -1393,7 +1393,7 @@ static __always_inline int __bnt_ipv6_fill_meta(BNT_CTX_TYPE *ctx, __u32 off,
         m->ext_depth++;
 
         if (nexthdr == NEXTHDR_FRAGMENT) {
-            __be16 frag_raw;
+            __be16 frag_raw = 0;
             __u16 frag_off_flags;
 
             ret = __bnt_read_be16_g(ctx, cur + 2, &frag_raw);
@@ -1580,6 +1580,9 @@ static __always_inline int __bnt_eth_meta_dispatch(const bnt_eth *eth, struct __
 #if !BNT_INLINE_ALL
     if (!eth || !m)
         return BNT_ERR_BAD_ARG;
+    /* The global clears *m itself, but verifiers before 6.3 reject stack
+     * memory passed to a global unless it is already initialized. */
+    __builtin_memset(m, 0, sizeof(*m));
     return __bnt_eth_meta_g(eth->__ctx, eth->__off, m);
 #else
     return __bnt_eth_meta(eth, m);
@@ -1596,6 +1599,7 @@ static __always_inline int __bnt_ipv4_meta_dispatch(const bnt_ipv4 *ip, struct _
 #if !BNT_INLINE_ALL
     if (!ip || !m)
         return BNT_ERR_BAD_ARG;
+    __builtin_memset(m, 0, sizeof(*m));
     return __bnt_ipv4_meta_g(ip->__ctx, ip->__off, m);
 #else
     return __bnt_ipv4_meta(ip, m);
@@ -1611,6 +1615,7 @@ static __always_inline int __bnt_ipv6_meta_dispatch(const bnt_ipv6 *ip6, struct 
 #if !BNT_INLINE_ALL
     if (!ip6 || !m)
         return BNT_ERR_BAD_ARG;
+    __builtin_memset(m, 0, sizeof(*m));
     return __bnt_ipv6_meta_g(ip6->__ctx, ip6->__off, m);
 #else
     return __bnt_ipv6_meta(ip6, m);
@@ -1623,6 +1628,7 @@ static __always_inline int __bnt_arp_meta_dispatch(const bnt_arp *arp, struct __
 #if !BNT_INLINE_ALL
     if (!arp || !m)
         return BNT_ERR_BAD_ARG;
+    __builtin_memset(m, 0, sizeof(*m));
     return __bnt_arp_meta_g(arp->__ctx, arp->__off, m);
 #else
     return __bnt_arp_meta(arp, m);
@@ -1669,7 +1675,7 @@ static __always_inline int bnt_eth__next_off(const bnt_eth *eth, __u32 *out)
 
 #if !BNT_INLINE_ALL
     {
-        __u32 off;
+        __u32 off = 0;
         int ret = __bnt_eth_next_off_g(eth->__ctx, eth->__off, &off);
         if (ret)
             return ret;
@@ -1697,7 +1703,7 @@ static __always_inline int bnt_eth__get_src(const bnt_eth *eth, unsigned char ou
         return BNT_ERR_BAD_ARG;
 #if !BNT_INLINE_ALL
     {
-        struct __bnt_mac tmp;
+        struct __bnt_mac tmp = {};
         int ret = __bnt_read_mac_g(eth->__ctx, eth->__off + offsetof(struct ethhdr, h_source), &tmp);
         if (ret) return ret;
         __builtin_memcpy(out, tmp.addr, BNT_MAC_LEN);
@@ -1719,7 +1725,7 @@ static __always_inline int bnt_eth__get_dst(const bnt_eth *eth, unsigned char ou
         return BNT_ERR_BAD_ARG;
 #if !BNT_INLINE_ALL
     {
-        struct __bnt_mac tmp;
+        struct __bnt_mac tmp = {};
         int ret = __bnt_read_mac_g(eth->__ctx, eth->__off + offsetof(struct ethhdr, h_dest), &tmp);
         if (ret) return ret;
         __builtin_memcpy(out, tmp.addr, BNT_MAC_LEN);
@@ -1745,7 +1751,7 @@ static __always_inline __u16 bnt_eth__get_ethertype(const bnt_eth *eth)
  *  Reads the EtherType field immediately after the destination and source MAC addresses. */
 static __always_inline int bnt_eth__get_outer_proto(const bnt_eth *eth, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -1830,7 +1836,7 @@ static __always_inline int bnt_eth__set_src(bnt_eth *eth, const unsigned char ma
         return BNT_ERR_BAD_ARG;
 #if !BNT_INLINE_ALL
     {
-        struct __bnt_mac tmp;
+        struct __bnt_mac tmp = {};
         __builtin_memcpy(tmp.addr, mac, BNT_MAC_LEN);
         return __bnt_write_mac_g(eth->__ctx, eth->__off + offsetof(struct ethhdr, h_source), &tmp);
     }
@@ -1847,7 +1853,7 @@ static __always_inline int bnt_eth__set_dst(bnt_eth *eth, const unsigned char ma
         return BNT_ERR_BAD_ARG;
 #if !BNT_INLINE_ALL
     {
-        struct __bnt_mac tmp;
+        struct __bnt_mac tmp = {};
         __builtin_memcpy(tmp.addr, mac, BNT_MAC_LEN);
         return __bnt_write_mac_g(eth->__ctx, eth->__off + offsetof(struct ethhdr, h_dest), &tmp);
     }
@@ -1980,7 +1986,7 @@ static __always_inline int bnt_ipv4__next_off(const bnt_ipv4 *ip, __u32 *out)
 
 #if !BNT_INLINE_ALL
     {
-        __u32 off;
+        __u32 off = 0;
         int ret = __bnt_ipv4_next_off_g(ip->__ctx, ip->__off, &off);
         if (ret)
             return ret;
@@ -2027,7 +2033,7 @@ static __always_inline int bnt_ipv4__next_proto_off(const bnt_ipv4 *ip,
 
 #if !BNT_INLINE_ALL
     {
-        __u32 o;
+        __u32 o = 0;
         int ret = __bnt_ipv4_next_proto_off_g(ip->__ctx, ip->__off, protocol, &o);
         if (ret)
             return ret;
@@ -2063,7 +2069,7 @@ static __always_inline int bnt_ipv4__get_tos(const bnt_ipv4 *ip, __u8 *out)
  *  Reads the IPv4 total length field. */
 static __always_inline int bnt_ipv4__get_total_len(const bnt_ipv4 *ip, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -2084,7 +2090,7 @@ static __always_inline int bnt_ipv4__get_total_len(const bnt_ipv4 *ip, __u16 *ou
  *  Reads the IPv4 identification field. */
 static __always_inline int bnt_ipv4__get_id(const bnt_ipv4 *ip, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -2105,7 +2111,7 @@ static __always_inline int bnt_ipv4__get_id(const bnt_ipv4 *ip, __u16 *out)
  *  Reads the IPv4 fragment offset and flags field. */
 static __always_inline int bnt_ipv4__get_frag_off(const bnt_ipv4 *ip, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -2150,7 +2156,7 @@ static __always_inline int bnt_ipv4__get_protocol(const bnt_ipv4 *ip, __u8 *out)
  *  Returns the IPv4 header length in bytes. */
 static __always_inline int bnt_ipv4__get_hlen(const bnt_ipv4 *ip, __u32 *out)
 {
-    __u8 vihl;
+    __u8 vihl = 0;
     __u32 hlen;
     int ret;
 
@@ -2179,7 +2185,7 @@ static __always_inline int bnt_ipv4__get_hlen(const bnt_ipv4 *ip, __u32 *out)
  *  Reads the IPv4 version field. */
 static __always_inline int bnt_ipv4__get_version(const bnt_ipv4 *ip, __u8 *out)
 {
-    __u8 vihl;
+    __u8 vihl = 0;
     int ret;
 
     if (!out)
@@ -2199,7 +2205,7 @@ static __always_inline int bnt_ipv4__get_version(const bnt_ipv4 *ip, __u8 *out)
  *  Reads the raw IPv4 IHL field, in 32-bit words. */
 static __always_inline int bnt_ipv4__get_ihl(const bnt_ipv4 *ip, __u8 *out)
 {
-    __u8 vihl;
+    __u8 vihl = 0;
     int ret;
 
     if (!out)
@@ -2219,7 +2225,7 @@ static __always_inline int bnt_ipv4__get_ihl(const bnt_ipv4 *ip, __u8 *out)
  *  Returns non-zero if the IPv4 packet is a fragment. */
 static __always_inline int bnt_ipv4__is_fragment(const bnt_ipv4 *ip, int *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -2280,7 +2286,7 @@ static __always_inline int bnt_ipv4__is_more_fragments(const bnt_ipv4 *ip, bool 
  *  Reads the IPv4 header checksum. */
 static __always_inline int bnt_ipv4__get_check(const bnt_ipv4 *ip, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -2397,7 +2403,7 @@ static __always_inline int __bnt_ipv4__set_frag_off_raw(bnt_ipv4 *ip, __u16 frag
 /** Writes the IPv4 IHL field without updating the checksum. */
 static __always_inline int __bnt_ipv4__set_hlen_raw(bnt_ipv4 *ip, __u32 hlen)
 {
-    __u8 old_first;
+    __u8 old_first = 0;
     __u8 new_first;
     int ret;
 
@@ -2458,7 +2464,7 @@ static __always_inline int bnt_ipv6__next_off(const bnt_ipv6 *ip6, __u32 *out)
 
 #if !BNT_INLINE_ALL
     {
-        __u32 off;
+        __u32 off = 0;
         int ret = __bnt_ipv6_next_off_g(ip6->__ctx, ip6->__off, &off);
         if (ret)
             return ret;
@@ -2481,7 +2487,7 @@ static __always_inline int bnt_ipv6__next_off(const bnt_ipv6 *ip6, __u32 *out)
  *  Reads the IPv6 traffic class field. */
 static __always_inline int bnt_ipv6__get_traffic_class(const bnt_ipv6 *ip6, __u8 *out)
 {
-    __be32 vtc_flow;
+    __be32 vtc_flow = 0;
     __u32 host;
     int ret;
 
@@ -2504,7 +2510,7 @@ static __always_inline int bnt_ipv6__get_traffic_class(const bnt_ipv6 *ip6, __u8
  *  Reads the IPv6 version field. */
 static __always_inline int bnt_ipv6__get_version(const bnt_ipv6 *ip6, __u8 *out)
 {
-    __u8 first;
+    __u8 first = 0;
     int ret;
 
     if (!out)
@@ -2524,7 +2530,7 @@ static __always_inline int bnt_ipv6__get_version(const bnt_ipv6 *ip6, __u8 *out)
  *  Reads the IPv6 flow label field. */
 static __always_inline int bnt_ipv6__get_flow_label(const bnt_ipv6 *ip6, __u32 *out)
 {
-    __be32 vtc_flow;
+    __be32 vtc_flow = 0;
     __u32 host;
     int ret;
 
@@ -2547,7 +2553,7 @@ static __always_inline int bnt_ipv6__get_flow_label(const bnt_ipv6 *ip6, __u32 *
  *  Reads the IPv6 payload length field. */
 static __always_inline int bnt_ipv6__get_payload_len(const bnt_ipv6 *ip6, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -2874,7 +2880,7 @@ int __bnt_ipv4_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib4 *fib)
 
     if (!fib)
         return BNT_ERR_BAD_ARG;
-    __builtin_memset(fib, 0, sizeof(*fib));
+    /* *fib arrives cleared by bnt_ipv4__fib_lookup(). */
 
     /* One bounded packet pointer, fields read directly (no header copy). */
     ret = __bnt_data_ptr(ctx, ip_off, sizeof(*ip), (void **)&ip);
@@ -2929,6 +2935,9 @@ static __always_inline int bnt_ipv4__fib_lookup(const bnt_ipv4 *ip, bnt_fib4 *fi
 #if !BNT_INLINE_ALL
     if (!ip || !ip->__ctx || !fib)
         return BNT_ERR_BAD_ARG;
+    /* Cleared here, not in the global: verifiers before 6.3 reject stack
+     * memory passed to a global unless it is already initialized. */
+    __builtin_memset(fib, 0, sizeof(*fib));
     return __bnt_ipv4_fib_lookup_g(ip->__ctx, ip->__off, fib);
 #else
     {
@@ -2997,7 +3006,7 @@ int __bnt_ipv6_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib6 *fib)
 
     if (!fib)
         return BNT_ERR_BAD_ARG;
-    __builtin_memset(fib, 0, sizeof(*fib));
+    /* *fib arrives cleared by bnt_ipv6__fib_lookup(). */
 
     /* One bounded packet pointer, fields read directly (no header copy). */
     ret = __bnt_data_ptr(ctx, ip_off, sizeof(*ip6), (void **)&ip6);
@@ -3041,11 +3050,14 @@ static __always_inline int bnt_ipv6__fib_lookup(const bnt_ipv6 *ip6, bnt_fib6 *f
 #if !BNT_INLINE_ALL
     if (!ip6 || !ip6->__ctx || !fib)
         return BNT_ERR_BAD_ARG;
+    /* Cleared here, not in the global: verifiers before 6.3 reject stack
+     * memory passed to a global unless it is already initialized. */
+    __builtin_memset(fib, 0, sizeof(*fib));
     return __bnt_ipv6_fib_lookup_g(ip6->__ctx, ip6->__off, fib);
 #else
     {
         struct ipv6hdr h = {};
-        __be32 vtc_flow;
+        __be32 vtc_flow = 0;
         __u8 first;
         int ret;
 
@@ -3467,7 +3479,7 @@ static __always_inline int __bnt_ipv6__set_daddr_raw(bnt_ipv6 *ip6, const struct
  *  Writes the IPv6 traffic class field. */
 static __always_inline int bnt_ipv6__set_traffic_class(bnt_ipv6 *ip6, __u8 tc)
 {
-    __be32 old_v;
+    __be32 old_v = 0;
     __u32 host;
     int ret;
 
@@ -3486,7 +3498,7 @@ static __always_inline int bnt_ipv6__set_traffic_class(bnt_ipv6 *ip6, __u8 tc)
  *  Writes the IPv6 flow label field. */
 static __always_inline int bnt_ipv6__set_flow_label(bnt_ipv6 *ip6, __u32 label)
 {
-    __be32 old_v;
+    __be32 old_v = 0;
     __u32 host;
     int ret;
 
@@ -3531,7 +3543,7 @@ static __always_inline int bnt_ipv6__set_payload_len(bnt_ipv6 *ip6, __u16 payloa
 {
     struct __bnt_ipv6_meta meta;
     BNT_CTX_TYPE *ctx;
-    __be16 old, v = bpf_htons(payload_len);
+    __be16 old = 0, v = bpf_htons(payload_len);
     __u32 ip6_off, pl_off, csum_off;
     void *data, *data_end;
     int ret;
@@ -3646,7 +3658,7 @@ static __always_inline int bnt_tcp__next_off(const bnt_tcp *tcp, __u32 *out)
 
 #if !BNT_INLINE_ALL
     {
-        __u32 off;
+        __u32 off = 0;
         int ret = __bnt_tcp_next_off_g(tcp->__ctx, tcp->__off, &off);
         if (ret)
             return ret;
@@ -3667,7 +3679,7 @@ static __always_inline int bnt_tcp__next_off(const bnt_tcp *tcp, __u32 *out)
  *  Reads the TCP source port. */
 static __always_inline int bnt_tcp__get_source(const bnt_tcp *tcp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -3686,7 +3698,7 @@ static __always_inline int bnt_tcp__get_source(const bnt_tcp *tcp, __u16 *out)
  *  Reads the TCP destination port. */
 static __always_inline int bnt_tcp__get_dest(const bnt_tcp *tcp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -3705,7 +3717,7 @@ static __always_inline int bnt_tcp__get_dest(const bnt_tcp *tcp, __u16 *out)
  *  Reads the TCP sequence number. */
 static __always_inline int bnt_tcp__get_seq(const bnt_tcp *tcp, __u32 *out)
 {
-    __be32 v;
+    __be32 v = 0;
     int ret;
 
     if (!out)
@@ -3724,7 +3736,7 @@ static __always_inline int bnt_tcp__get_seq(const bnt_tcp *tcp, __u32 *out)
  *  Reads the TCP acknowledgment number. */
 static __always_inline int bnt_tcp__get_ack_seq(const bnt_tcp *tcp, __u32 *out)
 {
-    __be32 v;
+    __be32 v = 0;
     int ret;
 
     if (!out)
@@ -3754,7 +3766,7 @@ static __always_inline __u32 bnt_tcp__get_doff(const bnt_tcp *tcp)
  *  Reads the TCP flags bitmask using BNT_TCP_* bits. */
 static __always_inline int bnt_tcp__get_flags(const bnt_tcp *tcp, __u16 *out)
 {
-    __be16 word;
+    __be16 word = 0;
     int ret;
 
     if (!out)
@@ -3853,7 +3865,7 @@ static __always_inline int bnt_tcp__is_ns(const bnt_tcp *tcp, bool *out)
  *  Reads the TCP window size. */
 static __always_inline int bnt_tcp__get_window(const bnt_tcp *tcp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -3872,7 +3884,7 @@ static __always_inline int bnt_tcp__get_window(const bnt_tcp *tcp, __u16 *out)
  *  Reads the TCP checksum. */
 static __always_inline int bnt_tcp__get_check(const bnt_tcp *tcp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -3891,7 +3903,7 @@ static __always_inline int bnt_tcp__get_check(const bnt_tcp *tcp, __u16 *out)
  *  Reads the TCP urgent pointer. */
 static __always_inline int bnt_tcp__get_urg_ptr(const bnt_tcp *tcp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -3950,7 +3962,7 @@ static __always_inline int __bnt_tcp__set_ack_seq_raw(bnt_tcp *tcp, __u32 ack_se
 /** Writes the TCP flags (preserving data offset and reserved bits) without updating the checksum. */
 static __always_inline int __bnt_tcp__set_flags_raw(bnt_tcp *tcp, __u16 flags)
 {
-    __be16 old;
+    __be16 old = 0;
     __u16 old_h;
     int ret;
 
@@ -3983,7 +3995,7 @@ static __always_inline int __bnt_tcp__set_urg_ptr_raw(bnt_tcp *tcp, __u16 urg_pt
 /** Writes the TCP data offset field without updating the checksum. */
 static __always_inline int __bnt_tcp__set_doff_raw(bnt_tcp *tcp, __u32 doff)
 {
-    __be16 old_word;
+    __be16 old_word = 0;
     int ret;
 
     if (!tcp)
@@ -4046,7 +4058,7 @@ static __always_inline int bnt_udp__next_off(const bnt_udp *udp, __u32 *out)
  *  Reads the UDP source port. */
 static __always_inline int bnt_udp__get_source(const bnt_udp *udp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -4065,7 +4077,7 @@ static __always_inline int bnt_udp__get_source(const bnt_udp *udp, __u16 *out)
  *  Reads the UDP destination port. */
 static __always_inline int bnt_udp__get_dest(const bnt_udp *udp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -4084,7 +4096,7 @@ static __always_inline int bnt_udp__get_dest(const bnt_udp *udp, __u16 *out)
  *  Reads the UDP length field. */
 static __always_inline int bnt_udp__get_len(const bnt_udp *udp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -4103,7 +4115,7 @@ static __always_inline int bnt_udp__get_len(const bnt_udp *udp, __u16 *out)
  *  Reads the UDP checksum. */
 static __always_inline int bnt_udp__get_check(const bnt_udp *udp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -4218,7 +4230,7 @@ static __always_inline int bnt_icmp4__get_code(const bnt_icmp4 *icmp, __u8 *out)
  *  Reads the ICMPv4 checksum. */
 static __always_inline int bnt_icmp4__get_checksum(const bnt_icmp4 *icmp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -4237,7 +4249,7 @@ static __always_inline int bnt_icmp4__get_checksum(const bnt_icmp4 *icmp, __u16 
  *  Reads the ICMPv4 echo identifier. */
 static __always_inline int bnt_icmp4__get_echo_id(const bnt_icmp4 *icmp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -4256,7 +4268,7 @@ static __always_inline int bnt_icmp4__get_echo_id(const bnt_icmp4 *icmp, __u16 *
  *  Reads the ICMPv4 echo sequence number. */
 static __always_inline int bnt_icmp4__get_echo_seq(const bnt_icmp4 *icmp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -4330,7 +4342,7 @@ static __always_inline int bnt_icmp4__set_type(bnt_icmp4 *icmp, __u8 type)
     return __bnt_icmp_set_typecode_g(icmp->__ctx, icmp->__off, type, 0);
 #else
     {
-        __be16 from, to;
+        __be16 from = 0, to;
         __u16 host;
         int ret;
         ret = __bnt_read_be16(icmp->__ctx, icmp->__off, &from);
@@ -4365,7 +4377,7 @@ static __always_inline int bnt_icmp4__set_code(bnt_icmp4 *icmp, __u8 code)
     return __bnt_icmp_set_typecode_g(icmp->__ctx, icmp->__off, code, 1);
 #else
     {
-        __be16 from, to;
+        __be16 from = 0, to;
         __u16 host;
         int ret;
         ret = __bnt_read_be16(icmp->__ctx, icmp->__off, &from);
@@ -4400,7 +4412,7 @@ static __always_inline int bnt_icmp4__set_echo_id(bnt_icmp4 *icmp, __u16 id)
     return __bnt_icmp_set_echo_g(icmp->__ctx, icmp->__off, id, 0);
 #else
     {
-        __be16 old, v = bpf_htons(id);
+        __be16 old = 0, v = bpf_htons(id);
         int ret;
         ret = __bnt_read_be16(icmp->__ctx, icmp->__off + 4, &old);
         if (ret)
@@ -4432,7 +4444,7 @@ static __always_inline int bnt_icmp4__set_echo_seq(bnt_icmp4 *icmp, __u16 seq)
     return __bnt_icmp_set_echo_g(icmp->__ctx, icmp->__off, seq, 1);
 #else
     {
-        __be16 old, v = bpf_htons(seq);
+        __be16 old = 0, v = bpf_htons(seq);
         int ret;
         ret = __bnt_read_be16(icmp->__ctx, icmp->__off + 6, &old);
         if (ret)
@@ -4555,7 +4567,7 @@ static __always_inline int bnt_icmp6__get_code(const bnt_icmp6 *icmp, __u8 *out)
  *  Reads the ICMPv6 checksum. */
 static __always_inline int bnt_icmp6__get_checksum(const bnt_icmp6 *icmp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -4574,7 +4586,7 @@ static __always_inline int bnt_icmp6__get_checksum(const bnt_icmp6 *icmp, __u16 
  *  Reads the ICMPv6 echo identifier. */
 static __always_inline int bnt_icmp6__get_echo_id(const bnt_icmp6 *icmp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -4593,7 +4605,7 @@ static __always_inline int bnt_icmp6__get_echo_id(const bnt_icmp6 *icmp, __u16 *
  *  Reads the ICMPv6 echo sequence number. */
 static __always_inline int bnt_icmp6__get_echo_seq(const bnt_icmp6 *icmp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -4782,7 +4794,7 @@ static __always_inline int bnt_icmp6__set_type(bnt_icmp6 *icmp, __u8 type)
     return __bnt_icmp_set_typecode_g(icmp->__ctx, icmp->__off, type, 0);
 #else
     {
-        __be16 from, to;
+        __be16 from = 0, to;
         __u16 host;
         int ret;
         ret = __bnt_read_be16(icmp->__ctx, icmp->__off, &from);
@@ -4817,7 +4829,7 @@ static __always_inline int bnt_icmp6__set_code(bnt_icmp6 *icmp, __u8 code)
     return __bnt_icmp_set_typecode_g(icmp->__ctx, icmp->__off, code, 1);
 #else
     {
-        __be16 from, to;
+        __be16 from = 0, to;
         __u16 host;
         int ret;
         ret = __bnt_read_be16(icmp->__ctx, icmp->__off, &from);
@@ -4837,7 +4849,7 @@ static __always_inline int bnt_icmp6__set_code(bnt_icmp6 *icmp, __u8 code)
 static __always_inline int __bnt_icmp6__write_router_advert_flags(bnt_icmp6 *icmp,
                                                                    __u8 flags)
 {
-    __be16 old;
+    __be16 old = 0;
     __be16 v;
     __u16 host;
     int ret;
@@ -4862,7 +4874,7 @@ static __always_inline int __bnt_icmp6__write_router_advert_flags(bnt_icmp6 *icm
 static __always_inline int __bnt_icmp6__write_neighbor_advert_flags(bnt_icmp6 *icmp,
                                                                      __u8 flags)
 {
-    __be16 old;
+    __be16 old = 0;
     __be16 v;
     __u16 host;
     int ret;
@@ -5112,7 +5124,7 @@ static __always_inline int bnt_icmp6__set_echo_id(bnt_icmp6 *icmp, __u16 id)
     return __bnt_icmp_set_echo_g(icmp->__ctx, icmp->__off, id, 0);
 #else
     {
-        __be16 old, v = bpf_htons(id);
+        __be16 old = 0, v = bpf_htons(id);
         int ret;
         ret = __bnt_read_be16(icmp->__ctx, icmp->__off + 4, &old);
         if (ret)
@@ -5144,7 +5156,7 @@ static __always_inline int bnt_icmp6__set_echo_seq(bnt_icmp6 *icmp, __u16 seq)
     return __bnt_icmp_set_echo_g(icmp->__ctx, icmp->__off, seq, 1);
 #else
     {
-        __be16 old, v = bpf_htons(seq);
+        __be16 old = 0, v = bpf_htons(seq);
         int ret;
         ret = __bnt_read_be16(icmp->__ctx, icmp->__off + 6, &old);
         if (ret)
@@ -5258,7 +5270,7 @@ static __always_inline int bnt_arp__is_eth_ipv4(const bnt_arp *arp)
  *  Reads the ARP hardware type. */
 static __always_inline int bnt_arp__get_htype(const bnt_arp *arp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -5277,7 +5289,7 @@ static __always_inline int bnt_arp__get_htype(const bnt_arp *arp, __u16 *out)
  *  Reads the ARP protocol type. */
 static __always_inline int bnt_arp__get_ptype(const bnt_arp *arp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -5320,7 +5332,7 @@ static __always_inline int bnt_arp__get_paddr_len(const bnt_arp *arp, __u8 *out)
  *  Reads the ARP operation field. */
 static __always_inline int bnt_arp__get_oper(const bnt_arp *arp, __u16 *out)
 {
-    __be16 v;
+    __be16 v = 0;
     int ret;
 
     if (!out)
@@ -5354,7 +5366,7 @@ static __always_inline int bnt_arp__get_sha(const bnt_arp *arp, unsigned char ou
         return BNT_ERR_UNSUPPORTED;
 #if !BNT_INLINE_ALL
     {
-        struct __bnt_mac tmp;
+        struct __bnt_mac tmp = {};
         ret = __bnt_read_mac_g(arp->__ctx, __bnt_arp_sha_off(arp), &tmp);
         if (ret)
             return ret;
@@ -5406,7 +5418,7 @@ static __always_inline int bnt_arp__get_tha(const bnt_arp *arp, unsigned char ou
         return BNT_ERR_UNSUPPORTED;
 #if !BNT_INLINE_ALL
     {
-        struct __bnt_mac tmp;
+        struct __bnt_mac tmp = {};
         ret = __bnt_read_mac_g(arp->__ctx, __bnt_arp_tha_off(arp, &meta), &tmp);
         if (ret)
             return ret;
@@ -5503,7 +5515,7 @@ static __always_inline int bnt_arp__set_sha(bnt_arp *arp, const unsigned char ma
         return BNT_ERR_UNSUPPORTED;
 #if !BNT_INLINE_ALL
     {
-        struct __bnt_mac tmp;
+        struct __bnt_mac tmp = {};
         __builtin_memcpy(tmp.addr, mac, ETH_ALEN);
         return __bnt_write_mac_g(arp->__ctx, __bnt_arp_sha_off(arp), &tmp);
     }
@@ -5546,7 +5558,7 @@ static __always_inline int bnt_arp__set_tha(bnt_arp *arp, const unsigned char ma
         return BNT_ERR_UNSUPPORTED;
 #if !BNT_INLINE_ALL
     {
-        struct __bnt_mac tmp;
+        struct __bnt_mac tmp = {};
         __builtin_memcpy(tmp.addr, mac, ETH_ALEN);
         return __bnt_write_mac_g(arp->__ctx, __bnt_arp_tha_off(arp, &meta), &tmp);
     }
@@ -5628,6 +5640,7 @@ static __always_inline int bnt_mpls__next_off(const bnt_mpls *m, __u32 *out)
 
 static __always_inline int __bnt_mpls__read_lse(const bnt_mpls *m, __be32 *lse)
 {
+    *lse = 0;
     return __bnt_read_be32(m->__ctx, m->__off, lse);
 }
 
@@ -5842,7 +5855,7 @@ static __always_inline int bnt_mpls__next_mpls(const bnt_mpls *m, bnt_mpls *next
 static __always_inline int bnt_mpls__next_ipv4(const bnt_mpls *m, bnt_ipv4 *ip4)
 {
     bool bos;
-    __u8 nibble;
+    __u8 nibble = 0;
     __u32 off;
     int ret;
 
@@ -5877,7 +5890,7 @@ static __always_inline int bnt_mpls__next_ipv4(const bnt_mpls *m, bnt_ipv4 *ip4)
 static __always_inline int bnt_mpls__next_ipv6(const bnt_mpls *m, bnt_ipv6 *ip6)
 {
     bool bos;
-    __u8 nibble;
+    __u8 nibble = 0;
     __u32 off;
     int ret;
 
@@ -6901,7 +6914,7 @@ static __always_inline int bnt_ctx__find_ipv4(BNT_CTX_TYPE *ctx, bnt_ipv4 *ip4)
 
 #if !BNT_INLINE_ALL
     {
-        __u32 off;
+        __u32 off = 0;
         int ret = __bnt_ctx_find_ipv4_g(ctx, &off);
         if (ret)
             return ret;
@@ -6954,7 +6967,7 @@ static __always_inline int bnt_ctx__find_ipv6(BNT_CTX_TYPE *ctx, bnt_ipv6 *ip6)
 
 #if !BNT_INLINE_ALL
     {
-        __u32 off;
+        __u32 off = 0;
         int ret = __bnt_ctx_find_ipv6_g(ctx, &off);
         if (ret)
             return ret;
@@ -7082,7 +7095,7 @@ static __always_inline int bnt_ctx__find_tcp(BNT_CTX_TYPE *ctx, bnt_tcp *tcp)
 
 #if !BNT_INLINE_ALL
     {
-        __u32 off;
+        __u32 off = 0;
         int ret = __bnt_ctx_find_tcp_g(ctx, &off);
         if (ret)
             return ret;
@@ -7165,7 +7178,7 @@ static __always_inline int bnt_ctx__find_udp(BNT_CTX_TYPE *ctx, bnt_udp *udp)
 
 #if !BNT_INLINE_ALL
     {
-        __u32 off;
+        __u32 off = 0;
         int ret = __bnt_ctx_find_udp_g(ctx, &off);
         if (ret)
             return ret;
@@ -7245,7 +7258,7 @@ static __always_inline int bnt_ctx__find_icmp4(BNT_CTX_TYPE *ctx, bnt_icmp4 *icm
 
 #if !BNT_INLINE_ALL
     {
-        __u32 off;
+        __u32 off = 0;
         int ret = __bnt_ctx_find_icmp4_g(ctx, &off);
         if (ret)
             return ret;
@@ -7308,7 +7321,7 @@ static __always_inline int bnt_ctx__find_icmp6(BNT_CTX_TYPE *ctx, bnt_icmp6 *icm
 
 #if !BNT_INLINE_ALL
     {
-        __u32 off;
+        __u32 off = 0;
         int ret = __bnt_ctx_find_icmp6_g(ctx, &off);
         if (ret)
             return ret;
@@ -7522,8 +7535,8 @@ static __always_inline int __bnt_ipv4__recompute_csum(bnt_ipv4 *ip)
 static __always_inline int __bnt_tcp__recompute_csum_v4(bnt_tcp *tcp, bnt_ipv4 *ip4)
 {
     __u8 pseudo[12];
-    __be16 tot_len_be;
-    __u8 vihl;
+    __be16 tot_len_be = 0;
+    __u8 vihl = 0;
     __u16 ip_hlen;
     __u16 tcp_len;
     __wsum acc;
@@ -7574,7 +7587,7 @@ static __always_inline int __bnt_tcp__recompute_csum_v4(bnt_tcp *tcp, bnt_ipv4 *
 static __always_inline int __bnt_tcp__recompute_csum_v6(bnt_tcp *tcp, bnt_ipv6 *ip6)
 {
     __u8 pseudo[40];
-    __be16 payload_len_be;
+    __be16 payload_len_be = 0;
     __u16 tcp_len;
     __wsum acc;
     __s64 res;
@@ -7619,7 +7632,7 @@ static __always_inline int __bnt_tcp__recompute_csum_v6(bnt_tcp *tcp, bnt_ipv6 *
 static __always_inline int __bnt_udp__recompute_csum_v4(bnt_udp *udp, bnt_ipv4 *ip4)
 {
     __u8 pseudo[12];
-    __be16 udp_len_be;
+    __be16 udp_len_be = 0;
     __u16 udp_len;
     __wsum acc;
     __s64 res;
@@ -7664,7 +7677,7 @@ static __always_inline int __bnt_udp__recompute_csum_v4(bnt_udp *udp, bnt_ipv4 *
 static __always_inline int __bnt_udp__recompute_csum_v6(bnt_udp *udp, bnt_ipv6 *ip6)
 {
     __u8 pseudo[40];
-    __be16 udp_len_be;
+    __be16 udp_len_be = 0;
     __u16 udp_len;
     __wsum acc;
     __s64 res;
@@ -7958,7 +7971,7 @@ static __always_inline int bnt_tcp__set_source(bnt_tcp *tcp, __u16 port)
     return __bnt_tcp_set_port_g(tcp->__ctx, tcp->__off, port, 0);
 #else
     {
-        __be16 old, v = bpf_htons(port);
+        __be16 old = 0, v = bpf_htons(port);
         int ret;
         ret = __bnt_read_be16(tcp->__ctx, tcp->__off + offsetof(struct tcphdr, source), &old);
         if (ret) return ret;
@@ -7986,7 +7999,7 @@ static __always_inline int bnt_tcp__set_dest(bnt_tcp *tcp, __u16 port)
     return __bnt_tcp_set_port_g(tcp->__ctx, tcp->__off, port, 1);
 #else
     {
-        __be16 old, v = bpf_htons(port);
+        __be16 old = 0, v = bpf_htons(port);
         int ret;
         ret = __bnt_read_be16(tcp->__ctx, tcp->__off + offsetof(struct tcphdr, dest), &old);
         if (ret) return ret;
@@ -8036,7 +8049,7 @@ static __always_inline int bnt_tcp__set_seq(bnt_tcp *tcp, __u32 seq)
     return __bnt_tcp_set_seq_g(tcp->__ctx, tcp->__off, seq, 0);
 #else
     {
-        __be32 old, v = bpf_htonl(seq);
+        __be32 old = 0, v = bpf_htonl(seq);
         int ret;
         ret = __bnt_read_be32(tcp->__ctx, tcp->__off + offsetof(struct tcphdr, seq), &old);
         if (ret) return ret;
@@ -8064,7 +8077,7 @@ static __always_inline int bnt_tcp__set_ack_seq(bnt_tcp *tcp, __u32 ack_seq)
     return __bnt_tcp_set_seq_g(tcp->__ctx, tcp->__off, ack_seq, 1);
 #else
     {
-        __be32 old, v = bpf_htonl(ack_seq);
+        __be32 old = 0, v = bpf_htonl(ack_seq);
         int ret;
         ret = __bnt_read_be32(tcp->__ctx, tcp->__off + offsetof(struct tcphdr, ack_seq), &old);
         if (ret) return ret;
@@ -8087,7 +8100,7 @@ static __always_inline int bnt_tcp__set_ack_seq(bnt_tcp *tcp, __u32 ack_seq)
  */
 static __always_inline int bnt_tcp__set_flags(bnt_tcp *tcp, __u16 flags)
 {
-    __be16 old, v;
+    __be16 old = 0, v;
     __u16 old_h;
     int ret;
     if (!tcp) return BNT_ERR_BAD_ARG;
@@ -8291,7 +8304,7 @@ static __always_inline int bnt_tcp__clear_ns(bnt_tcp *tcp)
  */
 static __always_inline int bnt_tcp__set_window(bnt_tcp *tcp, __u16 window)
 {
-    __be16 old, v = bpf_htons(window);
+    __be16 old = 0, v = bpf_htons(window);
     int ret;
     if (!tcp) return BNT_ERR_BAD_ARG;
     ret = __bnt_read_be16(tcp->__ctx, tcp->__off + offsetof(struct tcphdr, window), &old);
@@ -8313,7 +8326,7 @@ static __always_inline int bnt_tcp__set_window(bnt_tcp *tcp, __u16 window)
  */
 static __always_inline int bnt_tcp__set_urg_ptr(bnt_tcp *tcp, __u16 urg_ptr)
 {
-    __be16 old, v = bpf_htons(urg_ptr);
+    __be16 old = 0, v = bpf_htons(urg_ptr);
     int ret;
     if (!tcp) return BNT_ERR_BAD_ARG;
     ret = __bnt_read_be16(tcp->__ctx, tcp->__off + offsetof(struct tcphdr, urg_ptr), &old);
@@ -8335,7 +8348,7 @@ static __always_inline int bnt_tcp__set_urg_ptr(bnt_tcp *tcp, __u16 urg_ptr)
  */
 static __always_inline int bnt_tcp__set_doff(bnt_tcp *tcp, __u32 doff)
 {
-    __be16 old_word, new_word;
+    __be16 old_word = 0, new_word;
     int ret;
     if (!tcp) return BNT_ERR_BAD_ARG;
     if (doff < 5 || doff > 15)
@@ -8371,7 +8384,7 @@ static __always_inline int bnt_udp__set_source(bnt_udp *udp, __u16 port)
     return __bnt_udp_set_port_g(udp->__ctx, udp->__off, port, 0);
 #else
     {
-        __be16 old, v = bpf_htons(port);
+        __be16 old = 0, v = bpf_htons(port);
         int ret;
         ret = __bnt_read_be16(udp->__ctx, udp->__off + offsetof(struct udphdr, source), &old);
         if (ret) return ret;
@@ -8401,7 +8414,7 @@ static __always_inline int bnt_udp__set_dest(bnt_udp *udp, __u16 port)
     return __bnt_udp_set_port_g(udp->__ctx, udp->__off, port, 1);
 #else
     {
-        __be16 old, v = bpf_htons(port);
+        __be16 old = 0, v = bpf_htons(port);
         int ret;
         ret = __bnt_read_be16(udp->__ctx, udp->__off + offsetof(struct udphdr, dest), &old);
         if (ret) return ret;
@@ -8426,7 +8439,7 @@ static __always_inline int bnt_udp__set_dest(bnt_udp *udp, __u16 port)
  */
 static __always_inline int bnt_udp__set_len(bnt_udp *udp, __u16 len)
 {
-    __be16 old, v = bpf_htons(len);
+    __be16 old = 0, v = bpf_htons(len);
     int ret;
     if (!udp) return BNT_ERR_BAD_ARG;
     ret = __bnt_read_be16(udp->__ctx, udp->__off + offsetof(struct udphdr, len), &old);
@@ -8543,7 +8556,7 @@ static __always_inline int bnt_ipv4__set_tos(bnt_ipv4 *ip, __u8 tos)
     return __bnt_ipv4_set_tos_g(ip->__ctx, ip->__off, tos);
 #else
     {
-        __be16 old_w, new_w;
+        __be16 old_w = 0, new_w;
         __u16 h;
         int ret;
         /* word 0: version|IHL (high) | TOS (low) */
@@ -8596,7 +8609,7 @@ static __always_inline int bnt_ipv4__set_ttl(bnt_ipv4 *ip, __u8 ttl)
     return __bnt_ipv4_set_ttl_g(ip->__ctx, ip->__off, ttl);
 #else
     {
-        __be16 old_w, new_w;
+        __be16 old_w = 0, new_w;
         __u16 h;
         int ret;
         /* word 4: TTL (high) | protocol (low) */
@@ -8759,7 +8772,7 @@ static __always_inline int bnt_ipv4__set_protocol(bnt_ipv4 *ip, __u8 protocol)
 #else
     {
         struct __bnt_ipv4_meta meta;
-        __be16 old_w, new_w;
+        __be16 old_w = 0, new_w;
         __u16 h;
         __u32 csum_off;
         int ret;
@@ -8803,7 +8816,7 @@ static __always_inline int bnt_ipv4__set_protocol(bnt_ipv4 *ip, __u8 protocol)
  */
 static __always_inline int bnt_ipv4__set_hlen(bnt_ipv4 *ip, __u32 hlen)
 {
-    __be16 old_w, new_w;
+    __be16 old_w = 0, new_w;
     __u8 old_first, new_first;
     __u16 h;
     int ret;
@@ -8836,7 +8849,7 @@ static __always_inline int bnt_ipv4__set_hlen(bnt_ipv4 *ip, __u32 hlen)
  */
 static __always_inline int bnt_ipv4__set_id(bnt_ipv4 *ip, __u16 id)
 {
-    __be16 old, v = bpf_htons(id);
+    __be16 old = 0, v = bpf_htons(id);
     int ret;
     if (!ip) return BNT_ERR_BAD_ARG;
     ret = __bnt_read_be16(ip->__ctx, ip->__off + offsetof(struct iphdr, id), &old);
@@ -8858,7 +8871,7 @@ static __always_inline int bnt_ipv4__set_id(bnt_ipv4 *ip, __u16 id)
  */
 static __always_inline int bnt_ipv4__set_frag_off(bnt_ipv4 *ip, __u16 frag_off)
 {
-    __be16 old, v = bpf_htons(frag_off);
+    __be16 old = 0, v = bpf_htons(frag_off);
     int ret;
     if (!ip) return BNT_ERR_BAD_ARG;
     ret = __bnt_read_be16(ip->__ctx, ip->__off + offsetof(struct iphdr, frag_off), &old);
@@ -8984,7 +8997,7 @@ static __always_inline int bnt_ipv4__clear_more_fragments(bnt_ipv4 *ip)
 static __always_inline int bnt_ipv4__set_total_len(bnt_ipv4 *ip, __u16 total_len)
 {
     struct __bnt_ipv4_meta meta;
-    __be16 old, v = bpf_htons(total_len);
+    __be16 old = 0, v = bpf_htons(total_len);
     int ret;
     if (!ip) return BNT_ERR_BAD_ARG;
     ret = __bnt_ipv4_meta_dispatch(ip, &meta);
@@ -9073,7 +9086,7 @@ static __always_inline int bnt_ipv4__set_saddr(bnt_ipv4 *ip, __be32 saddr)
     return __bnt_ipv4_set_addr_g(ip->__ctx, ip->__off, saddr, 0);
 #else
     {
-        __be32 old;
+        __be32 old = 0;
         int ret;
         ret = __bnt_read_be32(ip->__ctx, ip->__off + offsetof(struct iphdr, saddr), &old);
         if (ret) return ret;
@@ -9106,7 +9119,7 @@ static __always_inline int bnt_ipv4__set_daddr(bnt_ipv4 *ip, __be32 daddr)
     return __bnt_ipv4_set_addr_g(ip->__ctx, ip->__off, daddr, 1);
 #else
     {
-        __be32 old;
+        __be32 old = 0;
         int ret;
         ret = __bnt_read_be32(ip->__ctx, ip->__off + offsetof(struct iphdr, daddr), &old);
         if (ret) return ret;

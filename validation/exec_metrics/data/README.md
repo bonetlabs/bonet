@@ -6,11 +6,12 @@ described in `../README.md`.
 
 How it was built:
 
-- BONet: commit `f33f20f` (the globals are compiled from `src/` as of that
-  commit, through `tests/globals` and `tests/units`).
+- BONet: the sources of the commit that last changed this file (the globals
+  are compiled from `src/` through `tests/globals` and `tests/units`).
 - Kernel: 7.0.0-38-generic (Ubuntu), in a virtme-ng VM, x86-64.
-- clang: Ubuntu packages 16.0.6, 17.0.6, 18.1.8, 19.1.7, 20.1.8, 21.1.8,
-  22.1.2.
+- clang: Ubuntu packages 16.0.6 (23ubuntu4), 17.0.6 (23ubuntu7), 18.1.8
+  (20ubuntu8), 19.1.7 (20ubuntu4), 20.1.8 (2ubuntu8), 21.1.8 (6ubuntu1),
+  22.1.2 (1ubuntu1).
 - gcc: Ubuntu `gcc-bpf` 16-20260315 (16.0.1, a trunk snapshot), as `gcc16`.
 - llvm-mca: LLVM 20.1.8, CPU models skylake and znver3.
 - Merlin: commit `442bd340878be7270a642062ca13acfdd203849b`; LLVM passes built
@@ -29,15 +30,14 @@ sudo ./kernel_cases.py results/objs > results/kernel_cases.tsv
     --mca skylake,znver3 $(cat results/objs/configs.txt)
 ```
 
-In this run every global in the case programs was the code measured in the
-whole objects; 368 rows are globals the verifier rejects (no kernel result);
-on the other 10240 the kernel's result matches `tests/units/expected.json`,
-and the interpreter agrees with the kernel both on the compiled code and on
-the code as the verifier translated it.
+Every global in the case programs was the code measured in the whole objects;
+392 rows are globals the verifier rejects (no kernel result); on the other
+10216 the kernel's result matches `tests/units/expected.json`, and the
+interpreter agrees with the kernel both on the compiled code and on the code
+as the verifier translated it.
 
-`eth_insert_ipv6` is not the best configuration of this table: that one
-(`clang20-O2+merlin_llvm+merlin_bc`) is rejected by the 6.8 verifier, which
-does not carry a bound checked after a spill to the spilled copy. The choice
-is the configuration that loads on 6.8 (Ubuntu 6.8.0-124) with the fewest
-executed loads, stores and multiplications, then the fewest executed
-instructions: `clang22-O2+merlin_bc`. The other 67 choices load on 6.8.
+The choices in `choices-kernel7.0.txt` were picked per global among the
+configurations no other one beats on these metrics. With them, every global
+loads and every case gives the expected result, in the asm and in the C build,
+on the latest release of each mainline series from 5.12 to 7.2, on the first
+release of each LTS since 5.15, and on Ubuntu 6.8.0-147 and 7.0.0-38.
