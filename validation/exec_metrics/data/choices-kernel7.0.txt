@@ -3,15 +3,15 @@ csum_blk: gcc16-base-Os
 csum_byte: gcc16-base-O2
 csum_word: gcc16-base-Os
 ctx_find_icmp4: clang20-Os+merlin_llvm+merlin_bc
-ctx_find_icmp6: clang20-O2+merlin_llvm+merlin_bc
+ctx_find_icmp6: clang18-O2+merlin_bc
 ctx_find_ipv4: clang20-Os+merlin_llvm+merlin_bc
 ctx_find_ipv6: clang20-O2+merlin_llvm+merlin_bc
-ctx_find_tcp: clang20-Os+merlin_llvm+merlin_bc
-ctx_find_udp: clang20-O2+merlin_llvm+merlin_bc
+ctx_find_tcp: clang18-Os+merlin_bc
+ctx_find_udp: clang18-O2+merlin_bc
 eth_insert_ipv4: clang16-O2+merlin_bc
 eth_insert_ipv6: clang20-O2+merlin_llvm+merlin_bc
 eth_insert_mpls: clang22-O2+merlin_bc
-eth_insert_vlan: clang18-O2
+eth_insert_vlan: clang18-Oz
 eth_meta: clang20-O2+merlin_bc
 eth_next_off: clang20-O2+merlin_bc
 eth_remove_ipv4: clang22-O2
@@ -28,7 +28,7 @@ ipv4_meta: clang20-O2+merlin_llvm+merlin_bc
 ipv4_next_off: clang22-O2+merlin_bc
 ipv4_next_proto_off: gcc16-base-Os
 ipv4_recompute_csum: clang16-O2+merlin_bc
-ipv4_set_addr: gcc16-base-Os
+ipv4_set_addr: gcc16-base-O2
 ipv4_set_frag_flag: clang20-O2 (unico)
 ipv4_set_protocol: clang20-O2
 ipv4_set_tos: clang20-O2 (unico)
@@ -36,9 +36,9 @@ ipv4_set_ttl: clang20-O2 (unico)
 ipv6_dec_hop_limit: clang20-O2+merlin_bc
 ipv6_fib_lookup: clang20-O2+merlin_llvm+merlin_bc
 ipv6_insert_srh: clang20-Os+merlin_llvm+merlin_bc
-ipv6_meta: clang16-O3+merlin_bc
-ipv6_next_off: clang20-O3+merlin_bc
-ipv6_set_addr: clang18-O3
+ipv6_meta: clang18-Oz+merlin_bc
+ipv6_next_off: gcc16-safe-O2
+ipv6_set_addr: clang18-Oz+merlin_bc
 ipv6_set_frag_flag: clang16-O3+merlin_bc
 ipv6_set_frag_off_flags: clang16-O3+merlin_bc
 l3_csum16: clang20-O2

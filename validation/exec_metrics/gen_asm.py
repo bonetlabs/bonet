@@ -61,14 +61,27 @@ missing = set(protos) ^ set(choice)
 if missing:
     sys.exit(f'globals without a choice, or chosen but unknown: {sorted(missing)}')
 
+
+def asm_line(line):
+    code, _, note = line.partition(' /* ')
+    return f'        "{code}\\n"' + (f'  /* {note}' if note else '')
+
+
 elfs, defs = {}, []
 for g in sorted(choice):
     c = choice[g]
     if c not in elfs:
         elfs[c] = Elf(os.path.join(objdir, c + '.o'))
-    body = '\n'.join(f'        "{line}\\n"' for line in function(elfs[c], g, f'bnt{g[5:-2]}'))
+    lines = function(elfs[c], g, f'bnt{g[5:-2]}')
+    # The last exit is the compiler's: anything clang emits after an asm
+    # that exits by itself is unreachable, and the verifier rejects it. So the
+    # chosen code has to end with exit; it is never rearranged.
+    if lines[-1] != 'exit':
+        sys.exit(f'{g}: the code of {c} does not end with exit; choose a configuration whose code does')
+    body = '\n'.join(asm_line(line) for line in lines[:-1])
     defs.append(f'/* {g[6:-2]}: {c} */\n__attribute__((noinline, weak, nonnull(1))) {protos[g]}\n{{\n'
-                f'    asm volatile(\n{body}\n    );\n    __builtin_unreachable();\n}}\n')
+                f'    register long r0 asm("r0");\n\n'
+                f'    asm volatile(\n{body}\n        : "=r"(r0));\n    return r0;\n}}\n')
 
 
 def default(k):
@@ -94,7 +107,8 @@ open(out, 'w').write(f'''/* SPDX-License-Identifier: MIT */
 #error "the asm globals are built for little-endian targets with unaligned packet access; build with -DBNT_ASM_GLOBALS=0"
 #endif
 {guards}
-/* The bodies never return to C: their parameters are only read by the asm. */
+/* Each body ends where its last exit was: the compiler emits that one, after
+ * the asm, returning r0. The parameters are only read by the asm. */
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-parameter"
 

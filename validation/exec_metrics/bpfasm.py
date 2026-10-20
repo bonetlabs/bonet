@@ -72,7 +72,9 @@ def function(elf, name, label_prefix):
             out.append(f'{"r" if code & 0x18 == 0x18 else "w"}{d} = *({SZ[code & 0x18]} *){mem(s, off)}')
         elif cls == 2:
             assert code & 0xe0 == 0x60, f'{name}: store mode {code:#x}'
-            out.append(f'*({SZ[code & 0x18]} *){mem(d, off)} = {imm}')
+            # Encoded: the assemblers of clang 16 and 17 have no syntax for it.
+            raw = struct.unpack_from('<Q', t, i * 8)[0]
+            out.append(f'.quad {raw:#018x} /* *({SZ[code & 0x18]} *){mem(d, off)} = {imm} */')
         elif cls == 3:
             assert code & 0xe0 == 0x60, f'{name}: store mode {code:#x}'
             out.append(f'*({SZ[code & 0x18]} *){mem(d, off)} = {"r" if code & 0x18 == 0x18 else "w"}{s}')

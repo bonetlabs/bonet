@@ -65,7 +65,7 @@ int xdp_vlan_ipv4_ttl_guard(struct xdp_md *ctx)
     if (ttl <= 1)
         return XDP_DROP;
 
-        ret = bnt_ipv4__set_ttl(&ip4, ttl - 1);
+    ret = bnt_ipv4__set_ttl(&ip4, ttl - 1);
     if (ret)
         return XDP_ABORTED;
 
