@@ -16,6 +16,8 @@ eBPF programs against equivalent programs written with the `bnt` framework.
 - `micro_perf/`: execution time of the workloads and the globals in the
   kernel (`BPF_PROG_TEST_RUN`), on one machine.
 - `macro_perf/`: two-machine forwarding throughput benchmarks.
+- `portability/`: the default build across kernels (5.12 to 7.2, one VM
+  each) and compilers (clang 16 to 22).
 - `softeng_perf/`: software-engineering metrics, verifier-log metrics, and
   cognitive-complexity reports.
 
@@ -127,6 +129,7 @@ python3 compare_metrics.py \
 - Software-engineering metrics, cognitive-complexity methodology, verifier-log
   metrics: `softeng_perf/README.md`.
 - Macro throughput experiments: `macro_perf/README.md`.
+- Kernels and compilers: `portability/README.md`.
 
 ## Cleanup
 

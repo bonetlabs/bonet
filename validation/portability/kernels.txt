@@ -1,0 +1,49 @@
+# Kernels for matrix.sh, one per line: NAME [IMAGE_DEB_URL]
+#
+# A name vX.Y[.Z] with no URL is a mainline build from
+# https://kernel.ubuntu.com/mainline/ (image and modules packages).
+# Any other name needs the URL of a linux-image(-unsigned) package; the
+# matching linux-modules package is taken from the same directory.
+#
+# The list: the newest release of each series from 5.12 (the first kernel the
+# default build loads on) to 7.2, the first release of each LTS series, and
+# the Ubuntu 24.04 and 26.04 kernels.
+
+v5.12.19
+v5.13.19
+v5.14.21
+v5.15
+v5.15.223
+v5.16.20
+v5.17.15
+v5.18.19
+v5.19.17
+v6.0.19
+v6.1
+v6.1.190
+v6.2
+v6.3
+v6.4
+v6.5.11
+v6.6
+v6.6.159
+v6.7.10
+v6.8.12
+v6.9.12
+v6.10.14
+v6.11.11
+v6.12
+v6.12.113
+v6.13.12
+v6.14.11
+v6.15.11
+v6.16.12
+v6.17.12
+v6.18
+v6.18.57
+v6.19.14
+v7.0.14
+v7.1.13
+v7.2.6
+ubuntu-6.8.0-147 http://archive.ubuntu.com/ubuntu/pool/main/l/linux/linux-image-unsigned-6.8.0-147-generic_6.8.0-147.147_amd64.deb
+ubuntu-7.0.0-38 http://archive.ubuntu.com/ubuntu/pool/main/l/linux/linux-image-unsigned-7.0.0-38-generic_7.0.0-38.38_amd64.deb
