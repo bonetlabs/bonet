@@ -866,7 +866,7 @@ static __always_inline __u32 __bnt_arp_tpa_off(const bnt_arp *arp, const struct 
  *   - weak lets the BPF static linker keep one copy when several objects that
  *     include this header are linked together;
  *   - nonnull(1): a global can only be called with the program's ctx, so ctx
- *     is never NULL and clang drops the !ctx checks of the inlined helpers.
+ *     is never NULL.
  */
 #if !BNT_INLINE_ALL
 
@@ -1605,7 +1605,7 @@ static __always_inline int __bnt_arp_meta_dispatch(const bnt_arp *arp, struct __
  * @param off Byte offset of the Ethernet header.
  * @param eth View initialized on success.
  * @retval BNT_OK          on success.
- * @retval BNT_ERR_BAD_ARG @p ctx or @p eth is NULL.
+ * @retval BNT_ERR_BAD_ARG @p eth is NULL.
  */
 static __always_inline int bnt_eth__parse(BNT_CTX_TYPE *ctx, __u32 off, bnt_eth *eth)
 {
@@ -1927,7 +1927,7 @@ static __always_inline int bnt_eth__set_outer_ethertype(bnt_eth *eth, __u16 ethe
  * @param off Byte offset of the IPv4 header.
  * @param ip  View initialized on success.
  * @retval BNT_OK          on success.
- * @retval BNT_ERR_BAD_ARG @p ctx or @p ip is NULL.
+ * @retval BNT_ERR_BAD_ARG @p ip is NULL.
  */
 static __always_inline int bnt_ipv4__parse(BNT_CTX_TYPE *ctx, __u32 off, bnt_ipv4 *ip)
 {
@@ -2402,7 +2402,7 @@ static __always_inline int __bnt_ipv4__set_hlen_raw(bnt_ipv4 *ip, __u32 hlen)
  * @param off Byte offset of the IPv6 header.
  * @param ip6 View initialized on success.
  * @retval BNT_OK          on success.
- * @retval BNT_ERR_BAD_ARG @p ctx or @p ip6 is NULL.
+ * @retval BNT_ERR_BAD_ARG @p ip6 is NULL.
  */
 static __always_inline int bnt_ipv6__parse(BNT_CTX_TYPE *ctx, __u32 off, bnt_ipv6 *ip6)
 {
@@ -2893,7 +2893,7 @@ int __bnt_ipv4_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib4 *fib)
 static __always_inline int bnt_ipv4__fib_lookup(const bnt_ipv4 *ip, bnt_fib4 *fib)
 {
 #if !BNT_INLINE_ALL
-    if (!ip || !ip->__ctx || !fib)
+    if (!ip || !fib)
         return BNT_ERR_BAD_ARG;
     /* Cleared here, not in the global: verifiers before 6.3 reject stack
      * memory passed to a global unless it is already initialized. */
@@ -2911,7 +2911,7 @@ static __always_inline int bnt_ipv4__fib_lookup(const bnt_ipv4 *ip, bnt_fib4 *fi
             return BNT_ERR_BAD_ARG;
         __builtin_memset(fib, 0, sizeof(*fib));
 
-        if (!ip || !ip->__ctx)
+        if (!ip)
             return BNT_ERR_BAD_ARG;
 
         ret = __bnt_read(ip->__ctx, ip->__off, &h, sizeof(h));
@@ -3008,7 +3008,7 @@ int __bnt_ipv6_fib_lookup_g(BNT_CTX_TYPE *ctx, __u32 ip_off, bnt_fib6 *fib)
 static __always_inline int bnt_ipv6__fib_lookup(const bnt_ipv6 *ip6, bnt_fib6 *fib)
 {
 #if !BNT_INLINE_ALL
-    if (!ip6 || !ip6->__ctx || !fib)
+    if (!ip6 || !fib)
         return BNT_ERR_BAD_ARG;
     /* Cleared here, not in the global: verifiers before 6.3 reject stack
      * memory passed to a global unless it is already initialized. */
@@ -3025,7 +3025,7 @@ static __always_inline int bnt_ipv6__fib_lookup(const bnt_ipv6 *ip6, bnt_fib6 *f
             return BNT_ERR_BAD_ARG;
         __builtin_memset(fib, 0, sizeof(*fib));
 
-        if (!ip6 || !ip6->__ctx)
+        if (!ip6)
             return BNT_ERR_BAD_ARG;
 
         ret = __bnt_read(ip6->__ctx, ip6->__off, &h, sizeof(h));
@@ -3589,7 +3589,7 @@ static __always_inline int bnt_ipv6__set_base_nexthdr(bnt_ipv6 *ip6, __u8 nexthd
  * @param off Byte offset of the TCP header.
  * @param tcp View initialized on success.
  * @retval BNT_OK          on success.
- * @retval BNT_ERR_BAD_ARG @p ctx or @p tcp is NULL.
+ * @retval BNT_ERR_BAD_ARG @p tcp is NULL.
  */
 static __always_inline int bnt_tcp__parse(BNT_CTX_TYPE *ctx, __u32 off, bnt_tcp *tcp)
 {
@@ -3989,7 +3989,7 @@ static __always_inline int __bnt_tcp__set_doff_raw(bnt_tcp *tcp, __u32 doff)
  * @param off Byte offset of the UDP header.
  * @param udp View initialized on success.
  * @retval BNT_OK          on success.
- * @retval BNT_ERR_BAD_ARG @p ctx or @p udp is NULL.
+ * @retval BNT_ERR_BAD_ARG @p udp is NULL.
  */
 static __always_inline int bnt_udp__parse(BNT_CTX_TYPE *ctx, __u32 off, bnt_udp *udp)
 {
@@ -4140,7 +4140,7 @@ static __always_inline int __bnt_udp__set_len_raw(bnt_udp *udp, __u16 len)
  * @param off  Byte offset of the ICMPv4 header.
  * @param icmp View initialized on success.
  * @retval BNT_OK          on success.
- * @retval BNT_ERR_BAD_ARG @p ctx or @p icmp is NULL.
+ * @retval BNT_ERR_BAD_ARG @p icmp is NULL.
  */
 static __always_inline int bnt_icmp4__parse(BNT_CTX_TYPE *ctx, __u32 off, bnt_icmp4 *icmp)
 {
@@ -4477,7 +4477,7 @@ static __always_inline int __bnt_icmp4__set_echo_seq_raw(bnt_icmp4 *icmp, __u16 
  * @param off  Byte offset of the ICMPv6 header.
  * @param icmp View initialized on success.
  * @retval BNT_OK          on success.
- * @retval BNT_ERR_BAD_ARG @p ctx or @p icmp is NULL.
+ * @retval BNT_ERR_BAD_ARG @p icmp is NULL.
  */
 static __always_inline int bnt_icmp6__parse(BNT_CTX_TYPE *ctx, __u32 off, bnt_icmp6 *icmp)
 {
@@ -5189,7 +5189,7 @@ static __always_inline int __bnt_icmp6__set_echo_seq_raw(bnt_icmp6 *icmp, __u16 
  * @param off Byte offset of the ARP message.
  * @param arp View initialized on success.
  * @retval BNT_OK          on success.
- * @retval BNT_ERR_BAD_ARG @p ctx or @p arp is NULL.
+ * @retval BNT_ERR_BAD_ARG @p arp is NULL.
  */
 static __always_inline int bnt_arp__parse(BNT_CTX_TYPE *ctx, __u32 off, bnt_arp *arp)
 {
@@ -5580,12 +5580,12 @@ static __always_inline int bnt_arp__set_tpa(bnt_arp *arp, __be32 tpa)
  * @param off Byte offset of the MPLS label.
  * @param m   View initialized on success.
  * @retval BNT_OK          on success.
- * @retval BNT_ERR_BAD_ARG @p ctx or @p m is NULL.
+ * @retval BNT_ERR_BAD_ARG @p m is NULL.
  * @retval BNT_ERR_TRUNC   the label falls outside the packet.
  */
 static __always_inline int bnt_mpls__parse(BNT_CTX_TYPE *ctx, __u32 off, bnt_mpls *m)
 {
-    if (!ctx || !m)
+    if (!m)
         return BNT_ERR_BAD_ARG;
     if (__bnt_bounds(ctx, off, 4))
         return BNT_ERR_TRUNC;

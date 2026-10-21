@@ -178,8 +178,6 @@ static __always_inline int __bnt_bounds_len(__u32 pkt_len, __u32 off, __u32 len)
 
 static __always_inline int __bnt_bounds(struct xdp_md *ctx, __u32 off, __u32 len)
 {
-    if (!ctx)
-        return BNT_ERR_BAD_ARG;
     return __bnt_bounds_len(__bnt_len(ctx), off, len);
 }
 
@@ -210,8 +208,6 @@ static __always_inline int __bnt_data_ptr(struct xdp_md *ctx, __u32 off, __u32 l
     if (!out)
         return BNT_ERR_BAD_ARG;
     *out = NULL;
-    if (!ctx)
-        return BNT_ERR_BAD_ARG;
     /* Before the checks, so gcc cannot drop them as already proven. */
     BNT_ZEXT32(off);
     if (len > BNT_XDP_MAX_PACKET_OFFSET)
@@ -470,8 +466,6 @@ static __always_inline int __bnt_csum_range(struct xdp_md *ctx, __u32 off, __u32
     if (!out)
         return BNT_ERR_BAD_ARG;
     *out = 0;
-    if (!ctx)
-        return BNT_ERR_BAD_ARG;
 
     if (len > BNT_MAX_PAYLOAD)
         return BNT_ERR_TRUNC;
@@ -908,8 +902,6 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_insert(struct xdp_md *ctx,
     __u32 i;
     __u32 lim;
 
-    if (!ctx)
-        return BNT_ERR_BAD_ARG;
     if (prefix_len > BNT_XDP_MAX_HEADER_PREFIX)
         return BNT_ERR_TOO_DEEP;
 
@@ -956,8 +948,6 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_remove(struct xdp_md *ctx,
     void *data, *data_end;
     __u32 i;
 
-    if (!ctx)
-        return BNT_ERR_BAD_ARG;
     if (prefix_len > BNT_XDP_MAX_HEADER_PREFIX)
         return BNT_ERR_TOO_DEEP;
 
@@ -994,8 +984,6 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_insert_##N(struct xdp_md *ctx,            \
     __u8 *shifted;                                                                \
     __u32 i;                                                                     \
     __bnt_copy_limit_t lim;                                                      \
-    if (!ctx)                                                                    \
-        return BNT_ERR_BAD_ARG;                                                \
     if (prefix_len > BNT_XDP_MAX_HEADER_PREFIX)                                \
         return BNT_ERR_TOO_DEEP;                                               \
     if (bpf_xdp_adjust_head(ctx, -(int)(N)))                                    \
@@ -1021,8 +1009,6 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_remove_##N(struct xdp_md *ctx,            \
     void *data, *data_end;                                                       \
     __u8 *shifted;                                                                \
     __u32 i;                                                                     \
-    if (!ctx)                                                                    \
-        return BNT_ERR_BAD_ARG;                                                \
     if (prefix_len > BNT_XDP_MAX_HEADER_PREFIX)                                \
         return BNT_ERR_TOO_DEEP;                                               \
     data     = (void *)(long)ctx->data;                                          \

@@ -155,7 +155,7 @@ static __always_inline int __bnt_write_be32(BNT_CTX_TYPE *ctx, __u32 off, __be32
 }
 
 #define __bnt_header_set(h, ctx, off) \
-    (!(h) || !(ctx) ? BNT_ERR_BAD_ARG : ((h)->__ctx = (ctx), (h)->__off = (off), BNT_OK))
+    (!(h) ? BNT_ERR_BAD_ARG : ((h)->__ctx = (ctx), (h)->__off = (off), BNT_OK))
 
 
 #endif /* BNT_RW_H */

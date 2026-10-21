@@ -106,14 +106,12 @@ static __always_inline int __bnt_bounds_len(__u32 pkt_len, __u32 off, __u32 len)
 
 static __always_inline int __bnt_bounds(struct __sk_buff *ctx, __u32 off, __u32 len)
 {
-    if (!ctx)
-        return BNT_ERR_BAD_ARG;
     return __bnt_bounds_len(__bnt_len(ctx), off, len);
 }
 
 static __always_inline int __bnt_read(struct __sk_buff *ctx, __u32 off, void *dst, __u32 len)
 {
-    if (!ctx || !dst)
+    if (!dst)
         return BNT_ERR_BAD_ARG;
 
     /* bpf_skb_load_bytes bounds-checks [off, off+len) against skb->len in the
@@ -126,7 +124,7 @@ static __always_inline int __bnt_read(struct __sk_buff *ctx, __u32 off, void *ds
 
 static __always_inline int __bnt_write(struct __sk_buff *ctx, __u32 off, const void *src, __u32 len)
 {
-    if (!ctx || !src)
+    if (!src)
         return BNT_ERR_BAD_ARG;
 
     /* bpf_skb_store_bytes bounds-checks in the kernel; explicit __bnt_bounds
@@ -165,8 +163,6 @@ static __always_inline int __bnt_csum_range(struct __sk_buff *ctx, __u32 off, __
     if (!out)
         return BNT_ERR_BAD_ARG;
     *out = 0;
-    if (!ctx)
-        return BNT_ERR_BAD_ARG;
 
     if (len > BNT_MAX_PAYLOAD)
         return BNT_ERR_TRUNC;
@@ -344,8 +340,6 @@ static __always_inline int bnt_eth__remove_vlan(bnt_eth *eth)
 static __always_inline int __bnt_eth_tc_adjust_after(struct __sk_buff *ctx,
                                                        __s32 delta)
 {
-    if (!ctx)
-        return BNT_ERR_BAD_ARG;
     if (bpf_skb_adjust_room(ctx, delta, BPF_ADJ_ROOM_NET, 0) < 0)
         return BNT_ERR_WRITE;
     return BNT_OK;
@@ -355,8 +349,6 @@ static __always_inline int __bnt_eth_tc_adjust_after(struct __sk_buff *ctx,
 static __always_inline int __bnt_eth_tc_adjust_mac(struct __sk_buff *ctx,
                                                      __s32 delta)
 {
-    if (!ctx)
-        return BNT_ERR_BAD_ARG;
     if (bpf_skb_adjust_room(ctx, delta, BPF_ADJ_ROOM_MAC, 0) < 0)
         return BNT_ERR_WRITE;
     return BNT_OK;
