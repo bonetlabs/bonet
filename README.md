@@ -73,11 +73,10 @@ Install once, system-wide:
 cmake -S . -B build && sudo cmake --install build
 ```
 
-This drops the headers in `/usr/local/include` (so `#include <bnt_xdp.h>`
-resolves with no extra `-I`, since clang searches `/usr/local/include` by
-default — even for `-target bpf`) and exports both a pkg-config file and a CMake
-package config. For Makefile / non-CMake projects — the common case for BPF data
-paths — use pkg-config:
+This puts the headers in `/usr/local/include`, which clang searches by default
+(also with `-target bpf`), so `#include <bnt_xdp.h>` needs no `-I`. It also
+installs a pkg-config file and a CMake package config. Without CMake, use
+pkg-config:
 
 ```bash
 clang -O2 -g -target bpf -mcpu=v3 $(pkg-config --cflags bnt) -c prog.c -o prog.o

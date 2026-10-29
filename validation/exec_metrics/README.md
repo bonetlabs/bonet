@@ -81,8 +81,8 @@ somewhere and pass its path. The numbers in our results come from commit
 `442bd340878be7270a642062ca13acfdd203849b`. Its bytecode optimizer needs numpy.
 
 - `merlin_bc.py MERLIN IN.o OUT.o` runs the bytecode optimizer on each function
-  once. Merlin's own driver would run it once per function on the whole
-  `.text`, i.e. 68 times over the same code.
+  once. Merlin's own driver would run it on the whole `.text` once per
+  function.
 - `merlin_llvm.sh MERLIN -O2 IN.c OUT.o [flags]` compiles through Merlin's LLVM
   passes. It builds them into `build/` against the LLVM of `LLVM_CONFIG`
   (default `llvm-config-20`), with three small fixes for LLVM newer than 17.

@@ -48,7 +48,7 @@ the Ubuntu archive and writes `~/bnt-clang/bin/<label>`, a script that runs
 that clang with its own libraries. Any other clang can be passed as well.
 
 `compilers.sh` builds `tests/globals` with each compiler and prints, for each,
-whether its 68 globals are the same code as with the first one. Exit status 1
+whether its globals are the same code as with the first one. Exit status 1
 means some compiler differs. With `-s DIR`, where `DIR` holds the objects of
 `../exec_metrics/candidates.py`, it also checks each build against the
 configurations chosen for the asm (`../exec_metrics/check_asm.py`).
@@ -67,7 +67,7 @@ can be given to fetch only some.
 
 `matrix.sh` builds everything with each `-c` compiler (`build.sh`), then
 boots each kernel in a VM that runs `test.sh`, and prints the summary at the
-end. With 38 kernels and one compiler it takes about an hour. Started again
+end. 38 kernels and seven compilers take about half an hour. Started again
 with the same arguments, it skips the kernels already tested. Give kernel
 names after the options to test only those, for instance three compilers on
 three kernels:
@@ -95,8 +95,8 @@ Run it detached as above: virtme-ng can hang when started from a tmux pane.
 
 ```
 kernel             compiler     globals asm      C  units asm        C workloads asm      C
-v5.12.19           clang16            68/68  66/68    102/102   98/102         14/14  12/14
-v5.12.19           clang22            68/68  68/68    102/102  102/102         14/14  14/14
+v5.12.19           clang21            94/94  94/94    133/133  133/133         14/14  14/14
+v5.12.19           clang22            94/94  92/94    133/133  131/133         14/14  14/14
 ```
 
 then, for MMLF, DNAT and ENCAP, the verifier's processed instructions and
@@ -106,10 +106,12 @@ What to expect with the current sources:
 
 - The asm globals load and give the expected results on every kernel of
   `kernels.txt`, with every compiler from 16 to 22.
-- With clang 16 and 17, the C globals do not all load: the verifier rejects
-  the IPv6 extension-header walk (`ipv6_meta`, and the two workloads that use
-  it), and on 5.12 also `udp_recompute_csum_v4`. The default build uses the
-  asm globals, which do not depend on the compiler.
+- The C globals load everywhere except with clang 22 on kernels up to 6.3,
+  where the verifier rejects `tcp_recompute_csum_v4` and
+  `udp_recompute_csum_v4`. The default build uses the asm globals, which do
+  not depend on the compiler.
+- Two plain workloads do not load with some compilers, on every kernel:
+  `xdp_acl_firewall_e2e` with clang 19 to 22, `xdp_srv6_encap` with clang 17.
 - The verifier's instructions for the BONet workloads change by a few percent
   between kernel series; those of the plain workloads do not. The stack depth
   is the same code everywhere, but from 6.7 (and 6.6.159) the kernel rounds
