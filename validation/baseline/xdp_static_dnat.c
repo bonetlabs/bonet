@@ -44,7 +44,7 @@ int xdp_static_dnat(struct xdp_md *ctx)
     __u32 l3_off;
     __u32 hlen;
     __u32 l4_off;
-    __u16 total_len;
+    __be16 *check;
     __u16 frag;
     __u8 ttl;
     int ret;
@@ -76,69 +76,52 @@ int xdp_static_dnat(struct xdp_md *ctx)
         return XDP_PASS;
 
     ip = (struct iphdr *)(data + l3_off);                        // [C P]
-    if ((unsigned char *)(ip + 1) > data_end || ip->version != 4) // [B]
+    if ((unsigned char *)(ip + 1) > data_end)                    // [B]
         return XDP_PASS;
 
+    if (ip->daddr != old_dst)
+        return XDP_PASS;
+
+    /* Find the L4 checksum before writing anything. It is there only with a
+     * complete IP header, in a non-subsequent fragment (IP_OFFSET == 0). */
     hlen = (__u32)ip->ihl * 4;
-    if (hlen < sizeof(*ip) || hlen > 60 ||
-        data + l3_off + hlen > data_end)                         // [B P]
-        return XDP_PASS;
-
-    total_len = bpf_ntohs(ip->tot_len);                          // [E]
-    if (total_len < hlen)
-        return XDP_PASS;
-
     frag = bpf_ntohs(ip->frag_off);                              // [E]
+    check = NULL;
+    if (hlen >= sizeof(*ip) && !(frag & IP_OFFSET) &&
+        (ip->protocol == IPPROTO_TCP || ip->protocol == IPPROTO_UDP)) {
+        l4_off = l3_off + hlen + (ip->protocol == IPPROTO_TCP ? offsetof(struct tcphdr, check)
+                                                              : offsetof(struct udphdr, check));
+        check = (__be16 *)(data + l4_off);                       // [C P]
+        if ((unsigned char *)(check + 1) > data_end)             // [B]
+            return XDP_ABORTED;
+        if (ip->protocol == IPPROTO_UDP && *check == 0)
+            check = NULL;                                        /* UDP checksum 0 = none */
+    }
 
-    if (ip->daddr == old_dst) {
-        l4_off = l3_off + hlen;
-        old_h = bpf_ntohl(old_dst); new_h = bpf_ntohl(new_dst); // [E]
-        sum  = (~(__u32)bpf_ntohs(ip->check)) & 0xffff;         // [E]
+    old_h = bpf_ntohl(old_dst); new_h = bpf_ntohl(new_dst);     // [E]
+    sum  = (~(__u32)bpf_ntohs(ip->check)) & 0xffff;             // [E]
+    sum += (~(old_h >> 16)) & 0xffff; sum += (~old_h) & 0xffff;
+    sum += new_h >> 16;               sum += new_h & 0xffff;
+    sum  = (sum & 0xffff) + (sum >> 16);
+    sum  = (sum & 0xffff) + (sum >> 16);
+    ip->check = bpf_htons((__u16)~sum);                          // [E CS]
+
+    if (check) {
+        sum  = (~(__u32)bpf_ntohs(*check)) & 0xffff;            // [E]
         sum += (~(old_h >> 16)) & 0xffff; sum += (~old_h) & 0xffff;
         sum += new_h >> 16;               sum += new_h & 0xffff;
         sum  = (sum & 0xffff) + (sum >> 16);
         sum  = (sum & 0xffff) + (sum >> 16);
-        ip->check = bpf_htons((__u16)~sum);                      // [E CS]
-
-        /* L4 header present only in non-subsequent fragments (IP_OFFSET == 0). */
-        if (!(frag & IP_OFFSET)) {
-            if (ip->protocol == IPPROTO_TCP) {
-                struct tcphdr *tcp = (struct tcphdr *)(data + l4_off); // [C P]
-
-                if ((unsigned char *)(tcp + 1) <= data_end) {   // [B]
-                    sum  = (~(__u32)bpf_ntohs(tcp->check)) & 0xffff; // [E]
-                    sum += (~(old_h >> 16)) & 0xffff; sum += (~old_h) & 0xffff;
-                    sum += new_h >> 16;               sum += new_h & 0xffff;
-                    sum  = (sum & 0xffff) + (sum >> 16);
-                    sum  = (sum & 0xffff) + (sum >> 16);
-                    tcp->check = bpf_htons((__u16)~sum);         // [E CS]
-                }
-            } else if (ip->protocol == IPPROTO_UDP) {
-                struct udphdr *udp = (struct udphdr *)(data + l4_off); // [C P]
-
-                if ((unsigned char *)(udp + 1) <= data_end && udp->check != 0) { // [B]
-                    sum  = (~(__u32)bpf_ntohs(udp->check)) & 0xffff; // [E]
-                    sum += (~(old_h >> 16)) & 0xffff; sum += (~old_h) & 0xffff;
-                    sum += new_h >> 16;               sum += new_h & 0xffff;
-                    sum  = (sum & 0xffff) + (sum >> 16);
-                    sum  = (sum & 0xffff) + (sum >> 16);
-                    udp->check = bpf_htons((__u16)~sum);         // [E CS]
-                    if (udp->check == 0)
-                        udp->check = bpf_htons(0xffff);          // [E CS]
-                }
-            }
-        }
-
-        ip->daddr = new_dst;
+        *check = bpf_htons((__u16)~sum);                         // [E CS]
+        if (ip->protocol == IPPROTO_UDP && *check == 0)
+            *check = bpf_htons(0xffff);                          // [E CS]
     }
 
-    ttl = ip->ttl;
-    if (ttl <= 1)
-        return XDP_DROP;
+    ip->daddr = new_dst;
 
     fib.family = AF_INET;
     fib.l4_protocol = ip->protocol;
-    fib.tot_len = total_len;
+    fib.tot_len = bpf_ntohs(ip->tot_len);                        // [E]
     fib.ifindex = ctx->ingress_ifindex;
     fib.tos = ip->tos;
     fib.ipv4_src = ip->saddr;
@@ -147,6 +130,10 @@ int xdp_static_dnat(struct xdp_md *ctx)
     ret = bpf_fib_lookup(ctx, &fib, sizeof(fib), 0);
     if (ret != BPF_FIB_LKUP_RET_SUCCESS)
         return XDP_PASS;
+
+    ttl = ip->ttl;
+    if (ttl <= 1)
+        return XDP_DROP;
 
     old_word = *(__be16 *)((unsigned char *)ip + offsetof(struct iphdr, ttl));
     new_word = bpf_htons(((__u16)(ttl - 1) << 8) |               // [E]

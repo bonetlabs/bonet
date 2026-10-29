@@ -83,13 +83,28 @@ int xdp_ipip_encap(struct xdp_md *ctx)
      * then write outer IP at data[l3_off].
      * Max prefix: 14 (ETH) + 2*4 (VLANs) = 22 bytes.
      */
-#pragma unroll
-    for (i = 0; i < 22; i++) {
-        if ((__u32)i >= l3_off)
-            break;
-        if (data + 20 + i + 1 > data_end)
+    if (l3_off == ETH_HLEN) {                                    /* Ethernet only: 3 loads, 3 stores */
+        __u64 w0;
+        __u32 w1;
+        __u16 w2;
+
+        if (data + 20 + ETH_HLEN > data_end)
             return XDP_ABORTED;
-        data[i] = data[20 + i];
+        w0 = *(__u64 *)(data + 20);
+        w1 = *(__u32 *)(data + 20 + 8);
+        w2 = *(__u16 *)(data + 20 + 12);
+        *(__u64 *)data = w0;
+        *(__u32 *)(data + 8) = w1;
+        *(__u16 *)(data + 12) = w2;
+    } else {
+#pragma unroll
+        for (i = 0; i < 22; i++) {
+            if ((__u32)i >= l3_off)
+                break;
+            if (data + 20 + i + 1 > data_end)
+                return XDP_ABORTED;
+            data[i] = data[20 + i];
+        }
     }
 
     /* Update proto field (ETH h_proto or innermost VLAN encap_proto). */

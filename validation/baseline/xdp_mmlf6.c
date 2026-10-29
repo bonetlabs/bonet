@@ -65,7 +65,7 @@ int xdp_mmlf6(struct xdp_md *ctx)
         return XDP_PASS;
 
     ip6 = (struct ipv6hdr *)(data + l3_off);
-    if ((unsigned char *)(ip6 + 1) > data_end || ip6->version != 6)
+    if (data + l3_off + offsetof(struct ipv6hdr, daddr) > data_end)
         return XDP_PASS;
 
     /* Mark traffic class if src matches blacklist (no checksum in IPv6). */
@@ -76,9 +76,8 @@ int xdp_mmlf6(struct xdp_md *ctx)
         *word0 = bpf_htonl(new_w);
     }
 
-    hop_limit = ip6->hop_limit;
-    if (hop_limit <= 1)
-        return XDP_DROP;
+    if ((unsigned char *)(ip6 + 1) > data_end)
+        return XDP_PASS;
 
     fib.family      = AF_INET6;
     fib.flowinfo    = *(__be32 *)ip6 & bpf_htonl(0x0fffffff);
@@ -91,6 +90,10 @@ int xdp_mmlf6(struct xdp_md *ctx)
     ret = bpf_fib_lookup(ctx, &fib, sizeof(fib), 0);
     if (ret != BPF_FIB_LKUP_RET_SUCCESS)
         return XDP_PASS;
+
+    hop_limit = ip6->hop_limit;
+    if (hop_limit <= 1)
+        return XDP_DROP;
 
     ip6->hop_limit = hop_limit - 1;
 

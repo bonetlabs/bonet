@@ -37,7 +37,6 @@ int xdp_ip6ip6_encap(struct xdp_md *ctx)
     unsigned char *data = (unsigned char *)(long)ctx->data;          // [CC]
     unsigned char *data_end = (unsigned char *)(long)ctx->data_end;  // [CC]
     struct ethhdr *eth = (struct ethhdr *)data;                  // [C]
-    struct ipv6hdr *inner;
     struct ipv6hdr *outer;
     struct bpf_fib_lookup fib = {};
     __be16 eth_proto;
@@ -72,9 +71,10 @@ int xdp_ip6ip6_encap(struct xdp_md *ctx)
     if (eth_proto != bpf_htons(ETH_P_IPV6))                     // [E]
         return XDP_PASS;
 
-    inner = (struct ipv6hdr *)(data + l3_off);                   // [C P]
-    if ((unsigned char *)(inner + 1) > data_end)                 // [B]
-        return XDP_PASS;
+    /* As bnt_eth__insert_ipv6: a prefix other than an Ethernet header at
+     * offset 0 is moved from a 64-byte window. */
+    if (l3_off != sizeof(*eth) && data + 64 > data_end)         // [B P]
+        return XDP_ABORTED;
 
     if (bpf_xdp_adjust_head(ctx, -(int)sizeof(struct ipv6hdr)))
         return XDP_ABORTED;
@@ -82,13 +82,28 @@ int xdp_ip6ip6_encap(struct xdp_md *ctx)
     data = (unsigned char *)(long)ctx->data;                     // [CC]
     data_end = (unsigned char *)(long)ctx->data_end;             // [CC]
 
-#pragma unroll
-    for (i = 0; i < 22; i++) {                                   // [L]
-        if ((__u32)i >= l3_off)
-            break;
-        if (data + sizeof(struct ipv6hdr) + i + 1 > data_end)   // [B P]
+    if (l3_off == ETH_HLEN) {                                    /* Ethernet only: 3 loads, 3 stores */
+        __u64 w0;
+        __u32 w1;
+        __u16 w2;
+
+        if (data + sizeof(struct ipv6hdr) + ETH_HLEN > data_end)
             return XDP_ABORTED;
-        data[i] = data[sizeof(struct ipv6hdr) + i];             // [P BW]
+        w0 = *(__u64 *)(data + sizeof(struct ipv6hdr));
+        w1 = *(__u32 *)(data + sizeof(struct ipv6hdr) + 8);
+        w2 = *(__u16 *)(data + sizeof(struct ipv6hdr) + 12);
+        *(__u64 *)data = w0;
+        *(__u32 *)(data + 8) = w1;
+        *(__u16 *)(data + 12) = w2;
+    } else {
+#pragma unroll
+        for (i = 0; i < 22; i++) {                                   // [L]
+            if ((__u32)i >= l3_off)
+                break;
+            if (data + sizeof(struct ipv6hdr) + i + 1 > data_end)   // [B P]
+                return XDP_ABORTED;
+            data[i] = data[sizeof(struct ipv6hdr) + i];             // [P BW]
+        }
     }
 
     if (data + l3_off > data_end)                                // [B P]
@@ -96,8 +111,7 @@ int xdp_ip6ip6_encap(struct xdp_md *ctx)
     *((__be16 *)(data + l3_off - 2)) = bpf_htons(ETH_P_IPV6);   // [P E]
 
     outer = (struct ipv6hdr *)(data + l3_off);                   // [C P]
-    inner = (struct ipv6hdr *)(data + l3_off + sizeof(*outer));  // [C P]
-    if ((unsigned char *)(inner + 1) > data_end)                 // [B]
+    if ((unsigned char *)(outer + 1) > data_end)                 // [B]
         return XDP_ABORTED;
 
     pkt_len = (__u32)((unsigned char *)data_end - data);

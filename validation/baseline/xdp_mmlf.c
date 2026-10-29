@@ -32,8 +32,6 @@ int xdp_mmlf(struct xdp_md *ctx)
     __be16 new_word;
     __u32 sum;
     __u32 l3_off;
-    __u32 hlen;
-    __u16 total_len;
     __u8 ttl;
     int ret;
     int i;
@@ -64,19 +62,12 @@ int xdp_mmlf(struct xdp_md *ctx)
         return XDP_PASS;
 
     ip = (struct iphdr *)(data + l3_off);                        // [C P]
-    if ((unsigned char *)(ip + 1) > data_end || ip->version != 4) // [B]
-        return XDP_PASS;
-
-    hlen = (__u32)ip->ihl * 4;
-    if (hlen < sizeof(*ip) || hlen > 60 ||
-        data + l3_off + hlen > data_end)                         // [B P]
-        return XDP_PASS;
-
-    total_len = bpf_ntohs(ip->tot_len);                          // [E]
-    if (total_len < hlen)
+    if (data + l3_off + offsetof(struct iphdr, daddr) > data_end) // [B P]
         return XDP_PASS;
 
     if (ip->saddr == blacklist_src) {
+        if ((unsigned char *)(ip + 1) > data_end)                // [B]
+            return XDP_ABORTED;
         old_word = *(__be16 *)ip;
         new_word = bpf_htons((bpf_ntohs(old_word) & 0xff00) | marked_tos); // [E]
         ip->tos = marked_tos;
@@ -88,13 +79,12 @@ int xdp_mmlf(struct xdp_md *ctx)
         ip->check = bpf_htons((__u16)~sum);                      // [E CS]
     }
 
-    ttl = ip->ttl;
-    if (ttl <= 1)
-        return XDP_DROP;
+    if ((unsigned char *)(ip + 1) > data_end)                    // [B]
+        return XDP_PASS;
 
     fib.family = AF_INET;
     fib.l4_protocol = ip->protocol;
-    fib.tot_len = total_len;
+    fib.tot_len = bpf_ntohs(ip->tot_len);                        // [E]
     fib.ifindex = ctx->ingress_ifindex;
     fib.tos = ip->tos;
     fib.ipv4_src = ip->saddr;
@@ -103,6 +93,10 @@ int xdp_mmlf(struct xdp_md *ctx)
     ret = bpf_fib_lookup(ctx, &fib, sizeof(fib), 0);
     if (ret != BPF_FIB_LKUP_RET_SUCCESS)
         return XDP_PASS;
+
+    ttl = ip->ttl;
+    if (ttl <= 1)
+        return XDP_DROP;
 
     old_word = *(__be16 *)((unsigned char *)ip + offsetof(struct iphdr, ttl));
     new_word = bpf_htons(((__u16)(ttl - 1) << 8) |               // [E]
