@@ -99,7 +99,7 @@ int tc_adjust_ipv4_udp_ingress(struct __sk_buff *skb)
     if (ret)
         return TC_ACT_SHOT;
 
-    ret = bnt_udp__recompute_csum(&udp, &ip4);
+    ret = bnt_udp__recompute_csum4(&udp, &ip4);
     if (ret)
         return TC_ACT_SHOT;
 

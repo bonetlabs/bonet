@@ -15,7 +15,7 @@
  * Validation goal:
  *   - validates bnt_ipv4__set_saddr_no_csum() and bnt_tcp__set_sport_no_csum()
  *   - validates bnt_ipv4__recompute_csum() (full IPv4 header recompute)
- *   - validates bnt_tcp__recompute_csum() (full TCP checksum with payload loop)
+ *   - validates bnt_tcp__recompute_csum4() (full TCP checksum with payload loop)
  *   - exercises the BPF verifier with the BNT_MAX_PAYLOAD iteration bound
  *
  * Behavior:
@@ -93,7 +93,7 @@ int xdp_tcp_snat_recompute(struct xdp_md *ctx)
     if (ret)
         return XDP_ABORTED;
 
-    ret = bnt_tcp__recompute_csum(&tcp, &ip4);
+    ret = bnt_tcp__recompute_csum4(&tcp, &ip4);
     if (ret)
         return XDP_ABORTED;
 

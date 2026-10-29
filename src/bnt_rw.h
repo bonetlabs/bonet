@@ -154,6 +154,14 @@ static __always_inline int __bnt_write_be32(BNT_CTX_TYPE *ctx, __u32 off, __be32
     return __bnt_write(ctx, off, &v, sizeof(v));
 }
 
+/*
+ * Largest offset the parse functions accept for a view. Accessors add field
+ * offsets to it in 32-bit arithmetic, so a view near 2^32 would wrap around to
+ * the packet start; no header lies past 64 KiB.
+ */
+#define __BNT_MAX_VIEW_OFFSET 0xffffu
+
+/* Sets a view. For offsets the library computed itself, already in range. */
 #define __bnt_header_set(h, ctx, off) \
     (!(h) ? BNT_ERR_BAD_ARG : ((h)->__ctx = (ctx), (h)->__off = (off), BNT_OK))
 

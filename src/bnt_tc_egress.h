@@ -339,7 +339,7 @@ static __always_inline int bnt_eth__insert_ipv4(bnt_eth *eth,
     __wsum csum;
     int ret;
 
-    ret = __bnt_eth_meta(eth, &meta);
+    ret = __bnt_eth_meta_view(eth, &meta);
     if (ret)
         return ret;
 
@@ -392,7 +392,7 @@ static __always_inline int bnt_eth__insert_ipv6(bnt_eth *eth,
     if (!saddr || !daddr)
         return BNT_ERR_BAD_ARG;
 
-    ret = __bnt_eth_meta(eth, &meta);
+    ret = __bnt_eth_meta_view(eth, &meta);
     if (ret)
         return ret;
 
@@ -433,7 +433,7 @@ static __always_inline int bnt_eth__remove_ipv4(bnt_eth *eth)
     __u32 prefix_len;
     int ret;
 
-    ret = __bnt_eth_meta(eth, &meta);
+    ret = __bnt_eth_meta_view(eth, &meta);
     if (ret)
         return ret;
     if (meta.proto != ETH_P_IP)
@@ -466,7 +466,7 @@ static __always_inline int bnt_eth__remove_ipv6(bnt_eth *eth)
     __u32 prefix_len;
     int ret;
 
-    ret = __bnt_eth_meta(eth, &meta);
+    ret = __bnt_eth_meta_view(eth, &meta);
     if (ret)
         return ret;
     if (meta.proto != ETH_P_IPV6)
@@ -585,7 +585,7 @@ static __always_inline int bnt_eth__insert_mpls(bnt_eth *eth,
     if (!eth || label > 0xFFFFFu)
         return BNT_ERR_BAD_ARG;
 
-    ret = __bnt_eth_meta(eth, &meta);
+    ret = __bnt_eth_meta_view(eth, &meta);
     if (ret)
         return ret;
 

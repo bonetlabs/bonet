@@ -49,7 +49,7 @@ setters, then rebuild the checksum once:
 @code{.c}
 bnt_tcp__set_dport_no_csum(&tcp, 8080);
 bnt_tcp__set_sport_no_csum(&tcp, 40000);
-bnt_tcp__recompute_csum(&tcp, &ip);
+bnt_tcp__recompute_csum4(&tcp, &ip);
 @endcode
 
 A recompute is provided only where a header can be rebuilt from scratch, and not

@@ -156,7 +156,7 @@ int xdp_adjust_ipv4_tcp_ingress_csum(struct xdp_md *ctx)
     ret = bnt_ipv4__recompute_csum(&ip4);
     if (ret) return XDP_ABORTED;
 
-    ret = bnt_tcp__recompute_csum(&tcp, &ip4);
+    ret = bnt_tcp__recompute_csum4(&tcp, &ip4);
     if (ret) return XDP_ABORTED;
 
     return XDP_PASS;

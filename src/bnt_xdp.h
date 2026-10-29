@@ -88,6 +88,14 @@
 #define BNT_INLINE_ALL 0
 #endif
 
+/* An operation: its global in global mode, its body (the same code, inlined)
+ * in the inline build. */
+#if BNT_INLINE_ALL
+#define __BNT_OP(f) f
+#else
+#define __BNT_OP(f) f##_g
+#endif
+
 #ifndef __BPF_HELPERS__
 static __wsum (*bpf_csum_diff)(__be32 *from, __u32 from_size, __be32 *to, __u32 to_size, __wsum seed) =
     (void *)BPF_FUNC_csum_diff;
@@ -225,6 +233,18 @@ static __always_inline int __bnt_data_ptr(struct xdp_md *ctx, __u32 off, __u32 l
     return BNT_OK;
 }
 
+/* __bnt_data_ptr for an offset the caller has already bounded, pinned in a
+ * register, at most BNT_XDP_MAX_PACKET_OFFSET - len: only the end test is left. */
+static __always_inline int __bnt_data_ptr_in_range(struct xdp_md *ctx, __u32 off, __u32 len, void **out)
+{
+    unsigned char *ptr = (unsigned char *)__bnt_xdp_data(ctx) + off;
+
+    if ((void *)(ptr + len) > __bnt_xdp_data_end(ctx))
+        return BNT_ERR_TRUNC;
+    *out = ptr;
+    return BNT_OK;
+}
+
 static __always_inline int __bnt_read(struct xdp_md *ctx, __u32 off, void *dst, __u32 len)
 {
     void *src;
@@ -285,7 +305,7 @@ static __always_inline int __bnt_write(struct xdp_md *ctx, __u32 off, const void
 #endif
 #endif
 
-#if !BNT_INLINE_ALL && !BNT_STRICT_ALIGN
+#if !BNT_STRICT_ALIGN
 /*
  * Global mode without BNT_STRICT_ALIGN: __bnt_read/__bnt_write copy in chunks
  * as wide as the alignment of the non-packet side's type, instead of byte by
@@ -366,24 +386,24 @@ static __always_inline int __bnt_write_wide(struct xdp_md *ctx, __u32 off, const
 #ifndef BNT_CSUM_CHUNK
 #define BNT_CSUM_CHUNK 64
 #endif
+/* bpf_csum_diff takes at most 512 bytes; the checksum code relies on it never
+ * failing, so the chunk must stay within that. */
+_Static_assert(BNT_CSUM_CHUNK >= 4 && BNT_CSUM_CHUNK <= 512 && !(BNT_CSUM_CHUNK & (BNT_CSUM_CHUNK - 1)),
+               "BNT_CSUM_CHUNK must be a power of 2 between 4 and 512");
 
 /* Define context type before including shared helpers. */
 #define BNT_CTX_TYPE struct xdp_md
 #include "bnt_rw.h"
 
-#if !BNT_INLINE_ALL
 /*
- * Fixed-size single-block checksum globals.  Straight-line (no loop) and with a
+ * Fixed-size single-block checksum global.  Straight-line (no loop) and with a
  * compile-time constant length, so __bnt_data_ptr threads its bounds check into
  * the pointer exactly as in the read primitives: bpf_csum_diff sees a packet
  * pointer with a provable, constant range even when off arrives with a wide
- * var_off.  __bnt_csum_range drives these from a loop that carries only the
+ * var_off.  __bnt_csum_range drives it from a loop that carries only the
  * scalar offset and accumulator, never a packet pointer.
  */
-__attribute__((noinline, weak, nonnull(1))) int __bnt_csum_blk_g(struct xdp_md *ctx, __u32 off,
-                                                __wsum seed, __wsum *out);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1))) int __bnt_csum_blk_g(struct xdp_md *ctx, __u32 off,
+static __always_inline int __bnt_csum_blk(struct xdp_md *ctx, __u32 off,
                                                 __wsum seed, __wsum *out)
 {
     void  *p;
@@ -396,57 +416,25 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_csum_blk_g(struct xdp_md *
     ret = __bnt_data_ptr(ctx, off, BNT_CSUM_CHUNK, &p);
     if (ret)
         return ret;
+    /* bpf_csum_diff fails only on a size that is not a multiple of 4 or is
+     * over 512 bytes; every call in BONet passes a constant that is neither. */
     res = bpf_csum_diff(NULL, 0, (__be32 *)p, BNT_CSUM_CHUNK, seed);
-    if (res < 0)
-        return BNT_ERR_TRUNC;
     *out = (__wsum)res;
     return BNT_OK;
 }
-#endif
 
-__attribute__((noinline, weak, nonnull(1))) int __bnt_csum_word_g(struct xdp_md *ctx, __u32 off,
-                                                 __wsum seed, __wsum *out);
+#if !BNT_INLINE_ALL
+__attribute__((noinline, weak, nonnull(1))) int __bnt_csum_blk_g(struct xdp_md *ctx, __u32 off,
+                                                __wsum seed, __wsum *out);
 #if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1))) int __bnt_csum_word_g(struct xdp_md *ctx, __u32 off,
-                                                 __wsum seed, __wsum *out)
+__attribute__((noinline, weak, nonnull(1))) int __bnt_csum_blk_g(struct xdp_md *ctx, __u32 off,
+                                                __wsum seed, __wsum *out)
 {
-    void  *p;
-    __s64  res;
-    int    ret;
-
-    if (!out)
-        return BNT_ERR_BAD_ARG;
-    *out = seed;
-    ret = __bnt_data_ptr(ctx, off, 4, &p);
-    if (ret)
-        return ret;
-    res = bpf_csum_diff(NULL, 0, (__be32 *)p, 4, seed);
-    if (res < 0)
-        return BNT_ERR_TRUNC;
-    *out = (__wsum)res;
-    return BNT_OK;
+    return __bnt_csum_blk(ctx, off, seed, out);
 }
 #endif
+#endif /* !BNT_INLINE_ALL */
 
-/* Reads one packet byte through a global (straight-line data_ptr). */
-__attribute__((noinline, weak, nonnull(1))) int __bnt_csum_byte_g(struct xdp_md *ctx, __u32 off, __u8 *out);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1))) int __bnt_csum_byte_g(struct xdp_md *ctx, __u32 off, __u8 *out)
-{
-    void *p;
-    int   ret;
-
-    if (!out)
-        return BNT_ERR_BAD_ARG;
-    *out = 0;
-    ret = __bnt_data_ptr(ctx, off, 1, &p);
-    if (ret)
-        return ret;
-    *out = *(__u8 *)p;
-    return BNT_OK;
-}
-#endif
-#endif
 
 /*
  * XDP __bnt_csum_range. `len` reloaded from its stack slot is unbounded even
@@ -460,7 +448,6 @@ static __always_inline int __bnt_csum_range(struct xdp_md *ctx, __u32 off, __u32
                                              __wsum seed, __wsum *out)
 {
     __wsum acc = seed;
-    __s64  res;
     __u32  i;
 
     if (!out)
@@ -470,7 +457,7 @@ static __always_inline int __bnt_csum_range(struct xdp_md *ctx, __u32 off, __u32
     if (len > BNT_MAX_PAYLOAD)
         return BNT_ERR_TRUNC;
     /* Bound off before deriving ptr (mirrors __bnt_data_ptr): once off arrives
-     * unconstrained from a *_meta_g result, the bounds checks below cannot
+     * unconstrained from another global's result, the bounds checks below cannot
      * recover a usable packet range without this clamp. */
     if (off > 0xffffu - len)
         return BNT_ERR_TRUNC;
@@ -485,126 +472,85 @@ static __always_inline int __bnt_csum_range(struct xdp_md *ctx, __u32 off, __u32
 #endif
     __u32 rem               = len & (__u32)(BNT_CSUM_CHUNK - 1);
 
-#if !BNT_INLINE_ALL
     /*
-     * Global mode: carry a scalar offset (cur) across the loop back-edge and
-     * re-derive a fresh, range-checked packet pointer each iteration.  When off
-     * arrives from a *_meta_g result it has a wide var_off; a packet pointer
-     * advanced across a back-edge loses its range under that var_off, so
-     * bpf_csum_diff would see r=0.  Re-deriving per iteration (as __bnt_data_ptr
-     * does for a single access) keeps every chunk pointer provably in range.
+     * Only the offset (cur) crosses the loop back-edge; each block gets its own
+     * range-checked pointer. A packet pointer carried across the back-edge loses
+     * its range when off has a wide var_off.
      */
-    {
-        __u32 cur = off;
-        int   ret;
+    __u32 cur = off;
+    int   ret;
 
-        for (i = 0; i < BNT_MAX_PAYLOAD / BNT_CSUM_CHUNK + 1; i++) {
-            if (i >= n_chunks)
-                break;
-            ret = __bnt_csum_blk_g(ctx, cur, acc, &acc);
-            if (ret)
-                return ret;
-            cur += BNT_CSUM_CHUNK;
-        }
-
-        for (i = 0; i < BNT_CSUM_CHUNK / 4; i++) {
-            if (i >= n_words)
-                break;
-            ret = __bnt_csum_word_g(ctx, cur, acc, &acc);
-            if (ret)
-                return ret;
-            cur += 4;
-        }
-
-        rem &= 3U;
-        if (rem > 0) {
-            __be32 tail = 0;
-            __u8  *t    = (__u8 *)&tail;
-
-            ret = __bnt_csum_byte_g(ctx, cur, &t[0]);
-            if (ret)
-                return ret;
-            if (rem >= 2) {
-                ret = __bnt_csum_byte_g(ctx, cur + 1, &t[1]);
-                if (ret)
-                    return ret;
-            }
-            if (rem >= 3) {
-                ret = __bnt_csum_byte_g(ctx, cur + 2, &t[2]);
-                if (ret)
-                    return ret;
-            }
-            res = bpf_csum_diff(NULL, 0, &tail, 4, acc);
-            if (res < 0)
-                return BNT_ERR_TRUNC;
-            acc = (__wsum)res;
-        }
-    }
-#else
-    /*
-     * Keep this hot checksum path in its compact direct-load form.  The
-     * generic XDP helpers break ctx load CSE, but doing that
-     * inside the csum loop increases verifier state pressure.
-     */
-    void *data_end = (void *)(long)ctx->data_end;
-    void *ptr = (void *)(long)ctx->data + off;
-
-    /* Process BNT_CSUM_CHUNK-byte chunks. */
-#if BNT_LEGACY_KERNEL
-#pragma unroll
-#endif
+    /* The whole range is tested once, so no block can fall outside the
+     * packet and their results need no test. */
+    if (off + len > __bnt_len(ctx))
+        return BNT_ERR_TRUNC;
     for (i = 0; i < BNT_MAX_PAYLOAD / BNT_CSUM_CHUNK + 1; i++) {
         if (i >= n_chunks)
             break;
-        if (ptr + BNT_CSUM_CHUNK > data_end)
-            return BNT_ERR_TRUNC;
-        res = bpf_csum_diff(NULL, 0, (__be32 *)ptr, BNT_CSUM_CHUNK, acc);
-        if (res < 0)
-            return BNT_ERR_TRUNC;
-        acc = (__wsum)res;
-        ptr += BNT_CSUM_CHUNK;
+        __BNT_OP(__bnt_csum_blk)(ctx, cur, acc, &acc);
+        cur += BNT_CSUM_CHUNK;
     }
 
-    /* Process 4-byte words of the remainder. */
-#if BNT_LEGACY_KERNEL
-#pragma unroll
-#endif
-    for (i = 0; i < BNT_CSUM_CHUNK / 4; i++) {
-        if (i >= n_words)
-            break;
-        if (ptr + 4 > data_end)
-            return BNT_ERR_TRUNC;
-        res = bpf_csum_diff(NULL, 0, (__be32 *)ptr, 4, acc);
-        if (res < 0)
-            return BNT_ERR_TRUNC;
-        acc = (__wsum)res;
-        ptr += 4;
-    }
-
-    /* Tail: 0–3 bytes. rem & 3 gives the byte count. */
+    /*
+     * The rest (under one chunk) summed in place from bounded pointers:
+     * the same one's-complement sum as bpf_csum_diff, without a helper
+     * call per word, whose clobbers would spill the loop counter (5.12
+     * loses it when spilled as 32 bits).
+     */
     rem &= 3U;
-    if (rem > 0) {
-        __be32 tail = 0;
-        __u8  *t    = (__u8 *)&tail;
-        if (ptr + 1 > data_end)
+    if (n_words || rem) {
+        __u64 sum = acc;
+        void *end;
+
+        if (cur > 0xff7fu)          /* a range the verifier can add to a pointer */
             return BNT_ERR_TRUNC;
-        t[0] = *((__u8 *)ptr);
-        if (rem >= 2) {
-            if (ptr + 2 > data_end)
-                return BNT_ERR_TRUNC;
-            t[1] = *((__u8 *)ptr + 1);
+        asm volatile("" : "+r"(cur));  /* BNT_PIN, defined in bnt_core.h */
+        end = (void *)(long)ctx->data_end;
+        if (n_words) {
+            const __u32 *p;
+
+            ret = __bnt_data_ptr_in_range(ctx, cur, 4, (void **)&p);
+            if (ret)
+                return ret;
+            for (i = 0; i < BNT_CSUM_CHUNK / 4 - 1; i++) {   /* n_words < CHUNK / 4 */
+                if (i >= n_words)
+                    break;
+                if ((void *)(p + 1) > end)
+                    return BNT_ERR_TRUNC;
+                sum += __BNT_PKT_LOAD(*p);
+                p++;
+            }
+            cur += n_words * 4;
+            asm volatile("" : "+r"(cur));
         }
-        if (rem >= 3) {
-            if (ptr + 3 > data_end)
+        if (rem) {                  /* the last 1-3 bytes, zero-padded to a word */
+            __be32 tail = 0;
+            __u8  *t    = (__u8 *)&tail;
+            const __u8 *p;
+
+            if (cur > 0xff7fu)      /* bounded again: 5.12 loses n_words if spilled */
                 return BNT_ERR_TRUNC;
-            t[2] = *((__u8 *)ptr + 2);
+            asm volatile("" : "+r"(cur));
+            ret = __bnt_data_ptr_in_range(ctx, cur, 1, (void **)&p);
+            if (ret)
+                return ret;
+            t[0] = p[0];
+            if (rem >= 2) {
+                if ((void *)(p + 2) > end)
+                    return BNT_ERR_TRUNC;
+                t[1] = p[1];
+            }
+            if (rem >= 3) {
+                if ((void *)(p + 3) > end)
+                    return BNT_ERR_TRUNC;
+                t[2] = p[2];
+            }
+            sum += tail;
         }
-        res = bpf_csum_diff(NULL, 0, &tail, 4, acc);
-        if (res < 0)
-            return BNT_ERR_TRUNC;
-        acc = (__wsum)res;
+        sum = (sum & 0xffffffffu) + (sum >> 32);
+        sum = (sum & 0xffffffffu) + (sum >> 32);
+        acc = (__wsum)sum;
     }
-#endif
 
     *out = acc;
     return BNT_OK;
@@ -684,65 +630,6 @@ static __always_inline int __bnt_l3_csum32(struct xdp_md *ctx, __u32 off,
     return __bnt_write_be16(ctx, off, __bnt_csum32_update(check, from, to));
 }
 
-/*
- * Global mode: confine the incremental checksum updaters in global BPF functions.
- * The inline versions read+write the checksum field at a caller-supplied offset;
- * once that offset arrives unconstrained from another global (e.g. a *_meta_g
- * result), the inline packet access fails range tracking.  Wrapping each updater
- * in a global verified once in isolation keeps every checksum write confined.
- * The redirect macros below route all callers (here and in bnt_core.h, included
- * afterwards) to the globals with no per-call-site changes.
- */
-#if !BNT_INLINE_ALL
-__attribute__((noinline, weak, nonnull(1))) int __bnt_l4_csum16_g(struct xdp_md *ctx, __u32 off,
-                                                 __be16 from, __be16 to, int mangled);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1))) int __bnt_l4_csum16_g(struct xdp_md *ctx, __u32 off,
-                                                 __be16 from, __be16 to, int mangled)
-{ return __bnt_l4_csum16(ctx, off, from, to, mangled); }
-#endif
-__attribute__((noinline, weak, nonnull(1))) int __bnt_l4_csum32_g(struct xdp_md *ctx, __u32 off,
-                                                 __be32 from, __be32 to, int mangled);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1))) int __bnt_l4_csum32_g(struct xdp_md *ctx, __u32 off,
-                                                 __be32 from, __be32 to, int mangled)
-{ return __bnt_l4_csum32(ctx, off, from, to, mangled); }
-#endif
-__attribute__((noinline, weak, nonnull(1))) int __bnt_l4_pseudo_csum16_g(struct xdp_md *ctx, __u32 off,
-                                                        __be16 from, __be16 to, int mangled);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1))) int __bnt_l4_pseudo_csum16_g(struct xdp_md *ctx, __u32 off,
-                                                        __be16 from, __be16 to, int mangled)
-{ return __bnt_l4_pseudo_csum16(ctx, off, from, to, mangled); }
-#endif
-__attribute__((noinline, weak, nonnull(1))) int __bnt_l4_pseudo_csum32_g(struct xdp_md *ctx, __u32 off,
-                                                        __be32 from, __be32 to, int mangled);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1))) int __bnt_l4_pseudo_csum32_g(struct xdp_md *ctx, __u32 off,
-                                                        __be32 from, __be32 to, int mangled)
-{ return __bnt_l4_pseudo_csum32(ctx, off, from, to, mangled); }
-#endif
-__attribute__((noinline, weak, nonnull(1))) int __bnt_l3_csum16_g(struct xdp_md *ctx, __u32 off,
-                                                 __be16 from, __be16 to);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1))) int __bnt_l3_csum16_g(struct xdp_md *ctx, __u32 off,
-                                                 __be16 from, __be16 to)
-{ return __bnt_l3_csum16(ctx, off, from, to); }
-#endif
-__attribute__((noinline, weak, nonnull(1))) int __bnt_l3_csum32_g(struct xdp_md *ctx, __u32 off,
-                                                 __be32 from, __be32 to);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1))) int __bnt_l3_csum32_g(struct xdp_md *ctx, __u32 off,
-                                                 __be32 from, __be32 to)
-{ return __bnt_l3_csum32(ctx, off, from, to); }
-#endif
-#define __bnt_l4_csum16        __bnt_l4_csum16_g
-#define __bnt_l4_csum32        __bnt_l4_csum32_g
-#define __bnt_l4_pseudo_csum16 __bnt_l4_pseudo_csum16_g
-#define __bnt_l4_pseudo_csum32 __bnt_l4_pseudo_csum32_g
-#define __bnt_l3_csum16        __bnt_l3_csum16_g
-#define __bnt_l3_csum32        __bnt_l3_csum32_g
-#endif
 
 #include "bnt_core.h"
 #undef BNT_CTX_TYPE
@@ -755,39 +642,85 @@ __attribute__((noinline, weak, nonnull(1))) int __bnt_l3_csum32_g(struct xdp_md 
 
 /* Raw setters for callers that will recompute checksums from scratch. */
 /** @ingroup bnt_ipv4
- *  Sets the IPv4 TOS/DSCP+ECN byte without updating the checksum. */
+ *  Sets the IPv4 TOS/DSCP+ECN byte without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p ip is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_ipv4__set_tos_no_csum(bnt_ipv4 *ip, __u8 tos)
     { return __bnt_ipv4__set_tos_raw(ip, tos); }
 /** @ingroup bnt_ipv4
- *  Sets the IPv4 TTL without updating the checksum. */
+ *  Sets the IPv4 TTL without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p ip is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_ipv4__set_ttl_no_csum(bnt_ipv4 *ip, __u8 ttl)
     { return __bnt_ipv4__set_ttl_raw(ip, ttl); }
 /** @ingroup bnt_ipv4
- *  Sets the IPv4 source address without updating any checksum. */
+ *  Sets the IPv4 source address without updating any checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p ip is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_ipv4__set_saddr_no_csum(bnt_ipv4 *ip, __be32 saddr)
     { return __bnt_ipv4__set_saddr_raw(ip, saddr); }
 /** @ingroup bnt_ipv4
- *  Sets the IPv4 destination address without updating any checksum. */
+ *  Sets the IPv4 destination address without updating any checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p ip is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_ipv4__set_daddr_no_csum(bnt_ipv4 *ip, __be32 daddr)
     { return __bnt_ipv4__set_daddr_raw(ip, daddr); }
 /** @ingroup bnt_ipv4
- *  Sets the IPv4 identification field without updating the checksum. */
+ *  Sets the IPv4 identification field without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p ip is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_ipv4__set_id_no_csum(bnt_ipv4 *ip, __u16 id)
     { return __bnt_ipv4__set_id_raw(ip, id); }
 /** @ingroup bnt_ipv4
- *  Sets the IPv4 total length field without updating any checksum. */
+ *  Sets the IPv4 total length field without updating any checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p ip is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_ipv4__set_total_len_no_csum(bnt_ipv4 *ip, __u16 total_len)
     { return __bnt_ipv4__set_total_len_raw(ip, total_len); }
 /** @ingroup bnt_ipv4
- *  Sets the IPv4 protocol field without updating any checksum. */
+ *  Sets the IPv4 protocol field without updating any checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p ip is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_ipv4__set_protocol_no_csum(bnt_ipv4 *ip, __u8 protocol)
     { return __bnt_ipv4__set_protocol_raw(ip, protocol); }
 /** @ingroup bnt_ipv4
- *  Sets the IPv4 fragment offset and flags word without updating the checksum. */
+ *  Sets the IPv4 fragment offset and flags word without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p ip is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_ipv4__set_frag_off_no_csum(bnt_ipv4 *ip, __u16 frag_off)
     { return __bnt_ipv4__set_frag_off_raw(ip, frag_off); }
 /** @ingroup bnt_ipv4
- *  Sets the IPv4 IHL (header length) without updating the checksum. */
+ *  Sets the IPv4 IHL (header length) without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p ip is NULL, or @p hlen is not a multiple of 4
+ *                         between 20 and 60.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_ipv4__set_hlen_no_csum(bnt_ipv4 *ip, __u32 hlen)
     { return __bnt_ipv4__set_hlen_raw(ip, hlen); }
 
@@ -976,6 +909,32 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_remove(struct xdp_md *ctx,
     return BNT_OK;
 }
 
+/*
+ * The prefix moves back by N into the new room. Every check is done before
+ * the packet grows, so a call that fails leaves it as it was. An Ethernet
+ * header at offset 0 (the common case) needs only its 14 bytes and is moved
+ * with three loads before three stores; any other prefix is copied byte by
+ * byte from a BNT_XDP_MAX_HEADER_PREFIX window, so the frame must hold that
+ * many bytes.
+ */
+#if BNT_STRICT_ALIGN
+#define __BNT_SHIFT_INSERT_ETH(data, shifted)                                   \
+    do {                                                                         \
+        for (i = 0; i < ETH_HLEN; i++)                                           \
+            *((__u8 *)(data) + i) = *((shifted) + i);                            \
+    } while (0)
+#else
+#define __BNT_SHIFT_INSERT_ETH(data, shifted)                                   \
+    do {                                                                         \
+        __u64 a = *(__u64 *)(shifted);                                           \
+        __u32 b = *(__u32 *)((shifted) + 8);                                     \
+        __u16 c = *(__u16 *)((shifted) + 12);                                    \
+        *(__u64 *)(data) = a;                                                    \
+        *(__u32 *)((__u8 *)(data) + 8) = b;                                      \
+        *(__u16 *)((__u8 *)(data) + 12) = c;                                     \
+    } while (0)
+#endif
+
 #define __BNT_SHIFT_INSERT_FIXED(N)                                             \
 __BNT_SHIFT_LINKAGE int __bnt_shift_insert_##N(struct xdp_md *ctx,            \
                                                   __u32 prefix_len)              \
@@ -986,11 +945,18 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_insert_##N(struct xdp_md *ctx,            \
     __bnt_copy_limit_t lim;                                                      \
     if (prefix_len > BNT_XDP_MAX_HEADER_PREFIX)                                \
         return BNT_ERR_TOO_DEEP;                                               \
+    if ((__u8 *)(long)ctx->data + (prefix_len == ETH_HLEN ? ETH_HLEN : BNT_XDP_MAX_HEADER_PREFIX) > \
+        (__u8 *)(long)ctx->data_end)                                             \
+        return BNT_ERR_TRUNC;                                                  \
     if (bpf_xdp_adjust_head(ctx, -(int)(N)))                                    \
         return BNT_ERR_WRITE;                                                  \
     data     = (void *)(long)ctx->data;                                          \
     data_end = (void *)(long)ctx->data_end;                                      \
     shifted  = (__u8 *)data + (N);                                               \
+    if (prefix_len == ETH_HLEN && (__u8 *)data + ETH_HLEN + (N) <= (__u8 *)data_end) { \
+        __BNT_SHIFT_INSERT_ETH(data, shifted);                                   \
+        return BNT_OK;                                                           \
+    }                                                                            \
     if ((__u8 *)data + BNT_XDP_MAX_HEADER_PREFIX + (N) > (__u8 *)data_end)    \
         return BNT_ERR_TRUNC;                                                  \
     lim = __BNT_COPY_LIMIT(prefix_len);                                          \
@@ -1002,10 +968,48 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_insert_##N(struct xdp_md *ctx,            \
     return BNT_OK;                                                              \
 }
 
+/*
+ * The prefix moves forward by N. When longer than N it overlaps itself, so the
+ * forward byte copy would read bytes it already overwrote: then it goes through
+ * a buffer, read whole as in __bnt_shift_insert. An Ethernet header at offset 0
+ * (the common remove_vlan) is moved without it: three loads before three
+ * stores, or with BNT_STRICT_ALIGN a copy from the end.
+ */
+#if BNT_STRICT_ALIGN
+#define __BNT_SHIFT_REMOVE_ETH(data, shifted, prefix_len)                       \
+    ((prefix_len) == ETH_HLEN && ({                                              \
+        for (i = ETH_HLEN; i-- > 0;)                                             \
+            *((shifted) + i) = *((__u8 *)(data) + i);                            \
+        1;                                                                       \
+    }))
+#define __BNT_SHIFT_REMOVE_READ(buf, data)                                      \
+    do {                                                                         \
+        for (i = 0; i < BNT_XDP_MAX_HEADER_PREFIX; i++)                          \
+            ((__u8 *)buf)[i] = *((__u8 *)(data) + i);                            \
+    } while (0)
+#else
+#define __BNT_SHIFT_REMOVE_ETH(data, shifted, prefix_len)                       \
+    ((prefix_len) == ETH_HLEN && ({                                              \
+        __u64 a = *(__u64 *)(data);                                              \
+        __u32 b = *(__u32 *)((__u8 *)(data) + 8);                                \
+        __u16 c = *(__u16 *)((__u8 *)(data) + 12);                               \
+        *(__u64 *)(shifted) = a;                                                 \
+        *(__u32 *)((shifted) + 8) = b;                                           \
+        *(__u16 *)((shifted) + 12) = c;                                          \
+        1;                                                                       \
+    }))
+#define __BNT_SHIFT_REMOVE_READ(buf, data)                                      \
+    do {                                                                         \
+        for (i = 0; i < BNT_XDP_MAX_HEADER_PREFIX / 8; i++)                      \
+            (buf)[i] = *((__u64 *)(data) + i);                                   \
+    } while (0)
+#endif
+
 #define __BNT_SHIFT_REMOVE_FIXED(N)                                             \
 __BNT_SHIFT_LINKAGE int __bnt_shift_remove_##N(struct xdp_md *ctx,            \
                                                   __u32 prefix_len)              \
 {                                                                                 \
+    __u64 buf[BNT_XDP_MAX_HEADER_PREFIX / 8];                                    \
     void *data, *data_end;                                                       \
     __u8 *shifted;                                                                \
     __u32 i;                                                                     \
@@ -1016,11 +1020,18 @@ __BNT_SHIFT_LINKAGE int __bnt_shift_remove_##N(struct xdp_md *ctx,            \
     shifted  = (__u8 *)data + (N);                                               \
     if ((__u8 *)data + BNT_XDP_MAX_HEADER_PREFIX + (N) > (__u8 *)data_end)    \
         return BNT_ERR_TRUNC;                                                  \
-    for (i = 0; i < BNT_XDP_MAX_HEADER_PREFIX; i++) {                         \
-        if (i >= prefix_len)                                                     \
-            break;                                                               \
-        *(shifted + i) = *((__u8 *)data + i);                                   \
-    }                                                                             \
+    if (!__BNT_SHIFT_REMOVE_ETH(data, shifted, prefix_len)) {                    \
+        const __u8 *src = data;                                                  \
+        if (prefix_len > (N)) {                                                  \
+            __BNT_SHIFT_REMOVE_READ(buf, data);                                  \
+            src = (const __u8 *)buf;                                             \
+        }                                                                        \
+        for (i = 0; i < BNT_XDP_MAX_HEADER_PREFIX; i++) {                       \
+            if (i >= prefix_len)                                                 \
+                break;                                                           \
+            *(shifted + i) = src[i];                                             \
+        }                                                                        \
+    }                                                                            \
     if (bpf_xdp_adjust_head(ctx, (int)(N)))                                     \
         return BNT_ERR_WRITE;                                                  \
     return BNT_OK;                                                              \
@@ -1034,16 +1045,11 @@ __BNT_SHIFT_REMOVE_FIXED(20)
 __BNT_SHIFT_REMOVE_FIXED(40)
 
 /** Inserts an outer VLAN header after the Ethernet source/destination fields. */
-#if !BNT_INLINE_ALL
 /* One-global insert: read outer EtherType + shift + write the VLAN tag and set
  * the eth EtherType to the TPID, all fused. Inserts the outer tag at a constant
  * offset (off + 14), so the post-adjust writes need no barrier (no walk widens
  * the offset). */
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci)
+static __always_inline int __bnt_eth_insert_vlan(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
     void *p;
@@ -1097,8 +1103,18 @@ int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci
     __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(tpid));
     return BNT_OK;
 }
+
+#if !BNT_INLINE_ALL
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci)
+{
+    return __bnt_eth_insert_vlan(ctx, off, tpid, tci);
+}
 #endif
-#endif
+#endif /* !BNT_INLINE_ALL */
 
 /**
  * @ingroup bnt_eth
@@ -1107,6 +1123,9 @@ int __bnt_eth_insert_vlan_g(struct xdp_md *ctx, __u32 off, __u16 tpid, __u16 tci
  *
  * @note The header prefix before the insertion point must not exceed
  * @c BNT_XDP_MAX_HEADER_PREFIX bytes; beyond it, returns BNT_ERR_TOO_DEEP.
+ * Unless @p eth is at offset 0, the packet must hold
+ * @c BNT_XDP_MAX_HEADER_PREFIX bytes; shorter, returns BNT_ERR_TRUNC. On an
+ * error the packet is left unchanged.
  * Views for headers after @p eth become stale; re-parse them.
  *
  * @param eth  Parsed Ethernet view.
@@ -1125,49 +1144,14 @@ static __always_inline int bnt_eth__insert_vlan(bnt_eth *eth, __u16 tpid, __u16 
 {
     if (!eth)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_eth_insert_vlan_g(eth->__ctx, eth->__off, tpid, tci);
-#else
-    {
-        struct __bnt_eth_meta meta;
-        __u16 outer_ethertype;
-        __u32 prefix_len;
-        int ret;
-        struct bnt_vlan_hdr vlan = {};
-
-        ret = __bnt_eth_meta(eth, &meta);
-        if (ret)
-            return ret;
-        if (meta.vlan_depth >= BNT_MAX_VLAN_DEPTH)
-            return BNT_ERR_TOO_DEEP;
-
-        ret = bnt_eth__get_outer_ethertype(eth, &outer_ethertype);
-        if (ret)
-            return ret;
-        prefix_len = eth->__off + sizeof(struct ethhdr);
-        ret = __bnt_shift_insert_4(eth->__ctx, prefix_len);
-        if (ret)
-            return ret;
-        ret = bnt_eth__set_outer_ethertype(eth, tpid);
-        if (ret)
-            return ret;
-        vlan.h_vlan_TCI = bpf_htons(tci);
-        vlan.h_vlan_encapsulated_proto = bpf_htons(outer_ethertype);
-        return __bnt_write(eth->__ctx, prefix_len, &vlan, sizeof(vlan));
-    }
-#endif
+    return __BNT_OP(__bnt_eth_insert_vlan)(eth->__ctx, eth->__off, tpid, tci);
 }
 
 /** Removes the outermost VLAN header after the Ethernet source/destination fields. */
-#if !BNT_INLINE_ALL
-/* One-global remove: read outer EtherType + encapsulated proto, rewrite the eth
- * EtherType, then shift-remove the 4-byte tag. bpf_xdp_adjust_head runs LAST (no
- * packet write follows the resize), so no post-adjust barrier is needed. */
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_remove_vlan_g(struct xdp_md *ctx, __u32 off);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_remove_vlan_g(struct xdp_md *ctx, __u32 off)
+/* Removes a VLAN tag: the encapsulated EtherType replaces the outer one, then
+ * the 4-byte tag is shifted out. bpf_xdp_adjust_head comes last, so no write
+ * follows the resize and no barrier is needed. */
+static __always_inline int __bnt_eth_remove_vlan(struct xdp_md *ctx, __u32 off)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
     void *p;
@@ -1191,15 +1175,30 @@ int __bnt_eth_remove_vlan_g(struct xdp_md *ctx, __u32 off)
         return ret;
     encap = __BNT_PKT_LOAD(*(__be16 *)p);
 
+    /* The move's own checks first: past them it cannot fail, so a call that
+     * fails writes nothing. */
+    if (vlan_off > BNT_XDP_MAX_HEADER_PREFIX)
+        return BNT_ERR_TOO_DEEP;
+    if ((__u8 *)__bnt_xdp_data(ctx) + BNT_XDP_MAX_HEADER_PREFIX + 4 > (__u8 *)__bnt_xdp_data_end(ctx))
+        return BNT_ERR_TRUNC;
     ret = __bnt_data_ptr(ctx, off + offsetof(struct ethhdr, h_proto), sizeof(__be16), &p);
     if (ret)
         return ret;
     __BNT_PKT_STORE(*(__be16 *)p, encap);
-
     return __bnt_shift_remove_4(ctx, vlan_off);
 }
+
+#if !BNT_INLINE_ALL
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_remove_vlan_g(struct xdp_md *ctx, __u32 off);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_remove_vlan_g(struct xdp_md *ctx, __u32 off)
+{
+    return __bnt_eth_remove_vlan(ctx, off);
+}
 #endif
-#endif
+#endif /* !BNT_INLINE_ALL */
 
 /**
  * @ingroup bnt_eth
@@ -1223,50 +1222,16 @@ static __always_inline int bnt_eth__remove_vlan(bnt_eth *eth)
 {
     if (!eth)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_eth_remove_vlan_g(eth->__ctx, eth->__off);
-#else
-    {
-        __be16 encap = 0;
-        __u32 vlan_off;
-        __u16 outer_ethertype;
-        int ret;
-
-        ret = bnt_eth__get_outer_ethertype(eth, &outer_ethertype);
-        if (ret)
-            return ret;
-        if (outer_ethertype != ETH_P_8021Q && outer_ethertype != ETH_P_8021AD)
-            return BNT_ERR_BAD_PROTO;
-
-        vlan_off = eth->__off + sizeof(struct ethhdr);
-        ret = __bnt_read_be16(eth->__ctx,
-                               vlan_off + offsetof(struct bnt_vlan_hdr, h_vlan_encapsulated_proto),
-                               &encap);
-        if (ret)
-            return ret;
-
-        ret = bnt_eth__set_outer_ethertype(eth, bpf_ntohs(encap));
-        if (ret)
-            return ret;
-
-        return __bnt_shift_remove_4(eth->__ctx, vlan_off);
-    }
-#endif
+    return __BNT_OP(__bnt_eth_remove_vlan)(eth->__ctx, eth->__off);
 }
 
 
 
 /** Inserts a base IPv4 header immediately after Ethernet/VLAN and initializes it. */
-#if !BNT_INLINE_ALL
 /* One-global insert: Ethernet/VLAN walk + shift + IPv4 header write fused. The
  * header write after bpf_xdp_adjust_head needs a barrier on prefix_len (see
  * __bnt_eth_insert_ipv6_g). */
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
-                             __be32 saddr, __be32 daddr);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
+static __always_inline int __bnt_eth_insert_ipv4(struct xdp_md *ctx, __u32 off, __u8 protocol,
                              __be32 saddr, __be32 daddr)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
@@ -1343,8 +1308,20 @@ int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
     __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(ETH_P_IP));
     return BNT_OK;
 }
+
+#if !BNT_INLINE_ALL
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
+                             __be32 saddr, __be32 daddr);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
+                             __be32 saddr, __be32 daddr)
+{
+    return __bnt_eth_insert_ipv4(ctx, off, protocol, saddr, daddr);
+}
 #endif
-#endif
+#endif /* !BNT_INLINE_ALL */
 
 /**
  * @ingroup bnt_eth
@@ -1358,6 +1335,9 @@ int __bnt_eth_insert_ipv4_g(struct xdp_md *ctx, __u32 off, __u8 protocol,
  *
  * @note The header prefix before the insertion point must not exceed
  * @c BNT_XDP_MAX_HEADER_PREFIX bytes; beyond it, returns BNT_ERR_TOO_DEEP.
+ * Unless @p eth is at offset 0 with no VLAN tag (a prefix of the Ethernet
+ * header alone), the packet must hold @c BNT_XDP_MAX_HEADER_PREFIX bytes;
+ * shorter, returns BNT_ERR_TRUNC. On an error the packet is left unchanged.
  * Views for headers after @p eth become stale; re-parse them.
  *
  * @param eth      Parsed Ethernet view.
@@ -1380,66 +1360,13 @@ static __always_inline int bnt_eth__insert_ipv4(bnt_eth *eth,
 {
     if (!eth)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_eth_insert_ipv4_g(eth->__ctx, eth->__off, protocol, saddr, daddr);
-#else
-    {
-        struct __bnt_eth_meta meta;
-        __u32 prefix_len;
-        __u32 pkt_len;
-        __u32 total_len;
-        __wsum csum;
-        int ret;
-
-        ret = __bnt_eth_meta(eth, &meta);
-        if (ret)
-            return ret;
-
-        prefix_len = eth->__off + meta.hlen;
-        ret = __bnt_shift_insert_20(eth->__ctx, prefix_len);
-        if (ret)
-            return ret;
-
-        pkt_len = __bnt_len(eth->__ctx);
-        if (prefix_len > pkt_len)
-            return BNT_ERR_TRUNC;
-        total_len = pkt_len - prefix_len;
-        if (total_len < sizeof(struct iphdr) || total_len > 0xffff)
-            return BNT_ERR_TRUNC;
-        {
-            struct iphdr h = {};
-            h.version  = 4;
-            h.ihl      = 5;
-            h.tot_len  = bpf_htons((__u16)total_len);
-            h.frag_off = bpf_htons(IP_DF);
-            h.ttl      = 64;
-            h.protocol = protocol;
-            h.saddr    = saddr;
-            h.daddr    = daddr;
-            csum = bpf_csum_diff(NULL, 0, (__be32 *)&h, sizeof(h), 0);
-            h.check = __bnt_csum_fold(csum);
-            ret = __bnt_write(eth->__ctx, prefix_len, &h, sizeof(h));
-            if (ret)
-                return ret;
-        }
-        return bnt_eth__set_ethertype(eth, ETH_P_IP);
-    }
-#endif
+    return __BNT_OP(__bnt_eth_insert_ipv4)(eth->__ctx, eth->__off, protocol, saddr, daddr);
 }
 
-#if !BNT_INLINE_ALL
-/* One-global insert: Ethernet/VLAN walk + shift + header write fused into a
- * single subprogram (1 bpf2bpf call instead of 3). Every packet write performed
- * AFTER bpf_xdp_adjust_head must be preceded by a barrier on its derived offset:
- * it forces clang to re-materialize the offset register so the verifier can keep
- * the bounds proof (without it, clang spills/reloads the offset wide across the
- * adjust and the access is rejected with r=0). This relies on clang's codegen. */
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
-                             const struct in6_addr *saddr, const struct in6_addr *daddr);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
+/* Every packet write after bpf_xdp_adjust_head has a barrier on its offset:
+ * it makes clang recompute the offset register instead of reloading a wider
+ * spilled copy, which the verifier rejects (r=0). */
+static __always_inline int __bnt_eth_insert_ipv6(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
                              const struct in6_addr *saddr, const struct in6_addr *daddr)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
@@ -1510,8 +1437,20 @@ int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
     __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(ETH_P_IPV6));
     return BNT_OK;
 }
+
+#if !BNT_INLINE_ALL
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
+                             const struct in6_addr *saddr, const struct in6_addr *daddr);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
+                             const struct in6_addr *saddr, const struct in6_addr *daddr)
+{
+    return __bnt_eth_insert_ipv6(ctx, off, nexthdr, saddr, daddr);
+}
 #endif
-#endif
+#endif /* !BNT_INLINE_ALL */
 
 /**
  * @ingroup bnt_eth
@@ -1524,6 +1463,9 @@ int __bnt_eth_insert_ipv6_g(struct xdp_md *ctx, __u32 off, __u8 nexthdr,
  *
  * @note The header prefix before the insertion point must not exceed
  * @c BNT_XDP_MAX_HEADER_PREFIX bytes; beyond it, returns BNT_ERR_TOO_DEEP.
+ * Unless @p eth is at offset 0 with no VLAN tag (a prefix of the Ethernet
+ * header alone), the packet must hold @c BNT_XDP_MAX_HEADER_PREFIX bytes;
+ * shorter, returns BNT_ERR_TRUNC. On an error the packet is left unchanged.
  * Views for headers after @p eth become stale; re-parse them.
  *
  * @param eth     Parsed Ethernet view.
@@ -1546,62 +1488,16 @@ static __always_inline int bnt_eth__insert_ipv6(bnt_eth *eth,
 {
     if (!eth || !saddr || !daddr)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
     {
         /* One global for the whole op. Copy the (possibly rodata) addresses to
          * stack so the global gets writable pointer args. */
         struct in6_addr s = *saddr, d = *daddr;
-        return __bnt_eth_insert_ipv6_g(eth->__ctx, eth->__off, nexthdr, &s, &d);
+        return __BNT_OP(__bnt_eth_insert_ipv6)(eth->__ctx, eth->__off, nexthdr, &s, &d);
     }
-#else
-    {
-        struct __bnt_eth_meta meta;
-        __u32 prefix_len;
-        __u32 pkt_len;
-        __u32 payload_len;
-        int ret;
-
-        ret = __bnt_eth_meta(eth, &meta);
-        if (ret)
-            return ret;
-
-        prefix_len = eth->__off + meta.hlen;
-        ret = __bnt_shift_insert_40(eth->__ctx, prefix_len);
-        if (ret)
-            return ret;
-
-        pkt_len = __bnt_len(eth->__ctx);
-        if (prefix_len > pkt_len)
-            return BNT_ERR_TRUNC;
-        payload_len = pkt_len - prefix_len - sizeof(struct ipv6hdr);
-        if (payload_len > 0xffff)
-            return BNT_ERR_TRUNC;
-        {
-            struct ipv6hdr h = {};
-            h.version     = 6;
-            h.payload_len = bpf_htons((__u16)payload_len);
-            h.nexthdr     = nexthdr;
-            h.hop_limit   = 64;
-            __builtin_memcpy(&h.saddr, saddr, sizeof(h.saddr));
-            __builtin_memcpy(&h.daddr, daddr, sizeof(h.daddr));
-            ret = __bnt_write(eth->__ctx, prefix_len, &h, sizeof(h));
-            if (ret)
-                return ret;
-        }
-        return bnt_eth__set_ethertype(eth, ETH_P_IPV6);
-    }
-#endif
 }
 
 /** Removes a base IPv4 header immediately after Ethernet/VLAN. */
-#if !BNT_INLINE_ALL
-/* One-global remove: Ethernet/VLAN walk + inner-header reads + EtherType rewrite
- * + shift-remove fused. bpf_xdp_adjust_head runs LAST, so no barrier is needed. */
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_remove_ipv4_g(struct xdp_md *ctx, __u32 off);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_remove_ipv4_g(struct xdp_md *ctx, __u32 off)
+static __always_inline int __bnt_eth_remove_ipv4(struct xdp_md *ctx, __u32 off)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
     void *p;
@@ -1637,10 +1533,15 @@ int __bnt_eth_remove_ipv4_g(struct xdp_md *ctx, __u32 off)
     prefix_len = off + hlen;
     /* one bounds check for the inner header; read both fields from the same
      * pointer so the verifier keeps the range (two separate __bnt_data_ptr
-     * reads off the same base get fused by the compiler and lose it). */
+     * reads off the same base get fused by the compiler and lose it). The
+     * bound is tested next to its use: clang otherwise reloads prefix_len from
+     * the stack in between, and 5.12 loses the bounds of a spilled scalar. */
     {
         struct iphdr *ip;
-        ret = __bnt_data_ptr(ctx, prefix_len, sizeof(*ip), (void **)&ip);
+        if (prefix_len > BNT_XDP_MAX_PACKET_OFFSET - sizeof(*ip))
+            return BNT_ERR_TRUNC;
+        BNT_PIN(prefix_len);
+        ret = __bnt_data_ptr_in_range(ctx, prefix_len, sizeof(*ip), (void **)&ip);
         if (ret)
             return ret;
         vihl = *(__u8 *)ip;
@@ -1665,12 +1566,27 @@ int __bnt_eth_remove_ipv4_g(struct xdp_md *ctx, __u32 off)
 #if BNT_LEGACY_KERNEL || (__clang_major__ >= 16 && __clang_major__ <= 19)
     BNT_PIN(eproto_off);     /* clang 16,17,18,19 */
 #endif
+    /* The move's own checks first: past them it cannot fail, so a call that
+     * fails writes nothing. */
+    if (prefix_len > BNT_XDP_MAX_HEADER_PREFIX)
+        return BNT_ERR_TOO_DEEP;
+    if ((__u8 *)__bnt_xdp_data(ctx) + BNT_XDP_MAX_HEADER_PREFIX + 20 > (__u8 *)__bnt_xdp_data_end(ctx))
+        return BNT_ERR_TRUNC;
     ret = __bnt_data_ptr(ctx, eproto_off, sizeof(__be16), &p);
     if (ret)
         return ret;
     __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(new_ethertype));
-
     return __bnt_shift_remove_20(ctx, prefix_len);
+}
+
+#if !BNT_INLINE_ALL
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_remove_ipv4_g(struct xdp_md *ctx, __u32 off);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_remove_ipv4_g(struct xdp_md *ctx, __u32 off)
+{
+    return __bnt_eth_remove_ipv4(ctx, off);
 }
 #endif
 #endif
@@ -1703,52 +1619,11 @@ static __always_inline int bnt_eth__remove_ipv4(bnt_eth *eth)
 {
     if (!eth)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_eth_remove_ipv4_g(eth->__ctx, eth->__off);
-#else
-    {
-        struct __bnt_eth_meta meta;
-        __u32 prefix_len;
-        __u8 vihl = 0, proto = 0;
-        int ret;
-
-        ret = __bnt_eth_meta(eth, &meta);
-        if (ret)
-            return ret;
-        if (meta.proto != ETH_P_IP)
-            return BNT_ERR_BAD_PROTO;
-
-        prefix_len = eth->__off + meta.hlen;
-        ret = __bnt_read_u8(eth->__ctx, prefix_len, &vihl);     /* version | IHL */
-        if (ret)
-            return ret;
-        if (vihl != 0x45)
-            return BNT_ERR_UNSUPPORTED;
-        ret = __bnt_read_u8(eth->__ctx, prefix_len + offsetof(struct iphdr, protocol), &proto);
-        if (ret)
-            return ret;
-        if (proto == IPPROTO_IPIP)
-            ret = bnt_eth__set_ethertype(eth, ETH_P_IP);
-        else if (proto == IPPROTO_IPV6)
-            ret = bnt_eth__set_ethertype(eth, ETH_P_IPV6);
-        else
-            return BNT_ERR_UNSUPPORTED;
-        if (ret)
-            return ret;
-        return __bnt_shift_remove_20(eth->__ctx, prefix_len);
-    }
-#endif
+    return __BNT_OP(__bnt_eth_remove_ipv4)(eth->__ctx, eth->__off);
 }
 
 /** Removes a base IPv6 header immediately after Ethernet/VLAN. */
-#if !BNT_INLINE_ALL
-/* One-global remove: Ethernet/VLAN walk + inner-header reads + EtherType rewrite
- * + shift-remove fused. bpf_xdp_adjust_head runs LAST, so no barrier is needed. */
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_remove_ipv6_g(struct xdp_md *ctx, __u32 off);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_remove_ipv6_g(struct xdp_md *ctx, __u32 off)
+static __always_inline int __bnt_eth_remove_ipv6(struct xdp_md *ctx, __u32 off)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
     void *p;
@@ -1782,12 +1657,14 @@ int __bnt_eth_remove_ipv6_g(struct xdp_md *ctx, __u32 off)
         return BNT_ERR_BAD_PROTO;
 
     prefix_len = off + hlen;
-    /* one bounds check for the inner header; read both fields from the same
-     * pointer so the verifier keeps the range (two separate __bnt_data_ptr
-     * reads off the same base get fused by the compiler and lose it). */
+    /* As in __bnt_eth_remove_ipv4_g: one pointer for both fields, bounded
+     * next to its use. */
     {
         struct ipv6hdr *ip6;
-        ret = __bnt_data_ptr(ctx, prefix_len, sizeof(*ip6), (void **)&ip6);
+        if (prefix_len > BNT_XDP_MAX_PACKET_OFFSET - sizeof(*ip6))
+            return BNT_ERR_TRUNC;
+        BNT_PIN(prefix_len);
+        ret = __bnt_data_ptr_in_range(ctx, prefix_len, sizeof(*ip6), (void **)&ip6);
         if (ret)
             return ret;
         ver = *(__u8 *)ip6;
@@ -1812,12 +1689,27 @@ int __bnt_eth_remove_ipv6_g(struct xdp_md *ctx, __u32 off)
 #if BNT_LEGACY_KERNEL
     BNT_PIN(eproto_off);
 #endif
+    /* The move's own checks first: past them it cannot fail, so a call that
+     * fails writes nothing. */
+    if (prefix_len > BNT_XDP_MAX_HEADER_PREFIX)
+        return BNT_ERR_TOO_DEEP;
+    if ((__u8 *)__bnt_xdp_data(ctx) + BNT_XDP_MAX_HEADER_PREFIX + 40 > (__u8 *)__bnt_xdp_data_end(ctx))
+        return BNT_ERR_TRUNC;
     ret = __bnt_data_ptr(ctx, eproto_off, sizeof(__be16), &p);
     if (ret)
         return ret;
     __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(new_ethertype));
-
     return __bnt_shift_remove_40(ctx, prefix_len);
+}
+
+#if !BNT_INLINE_ALL
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_remove_ipv6_g(struct xdp_md *ctx, __u32 off);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_remove_ipv6_g(struct xdp_md *ctx, __u32 off)
+{
+    return __bnt_eth_remove_ipv6(ctx, off);
 }
 #endif
 #endif
@@ -1849,41 +1741,7 @@ static __always_inline int bnt_eth__remove_ipv6(bnt_eth *eth)
 {
     if (!eth)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_eth_remove_ipv6_g(eth->__ctx, eth->__off);
-#else
-    {
-        struct __bnt_eth_meta meta;
-        __u32 prefix_len;
-        __u8 ver = 0, nexthdr = 0;
-        int ret;
-
-        ret = __bnt_eth_meta(eth, &meta);
-        if (ret)
-            return ret;
-        if (meta.proto != ETH_P_IPV6)
-            return BNT_ERR_BAD_PROTO;
-
-        prefix_len = eth->__off + meta.hlen;
-        ret = __bnt_read_u8(eth->__ctx, prefix_len, &ver);
-        if (ret)
-            return ret;
-        if ((ver >> 4) != 6)
-            return BNT_ERR_UNSUPPORTED;
-        ret = __bnt_read_u8(eth->__ctx, prefix_len + offsetof(struct ipv6hdr, nexthdr), &nexthdr);
-        if (ret)
-            return ret;
-        if (nexthdr == IPPROTO_IPIP)
-            ret = bnt_eth__set_ethertype(eth, ETH_P_IP);
-        else if (nexthdr == IPPROTO_IPV6)
-            ret = bnt_eth__set_ethertype(eth, ETH_P_IPV6);
-        else
-            return BNT_ERR_UNSUPPORTED;
-        if (ret)
-            return ret;
-        return __bnt_shift_remove_40(eth->__ctx, prefix_len);
-    }
-#endif
+    return __BNT_OP(__bnt_eth_remove_ipv6)(eth->__ctx, eth->__off);
 }
 
 #if BNT_XDP_IPV6_CSUM_SUPPORT
@@ -1905,65 +1763,140 @@ static __always_inline int bnt_ipv6__set_payload_len_no_csum(bnt_ipv6 *ip6, __u1
 #endif
 
 /** @ingroup bnt_tcp
- *  Sets the TCP source port without updating the checksum. */
+ *  Sets the TCP source port without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p tcp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_tcp__set_sport_no_csum(bnt_tcp *tcp, __u16 port)
     { return __bnt_tcp__set_sport_raw(tcp, port); }
 /** @ingroup bnt_tcp
- *  Sets the TCP destination port without updating the checksum. */
+ *  Sets the TCP destination port without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p tcp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_tcp__set_dport_no_csum(bnt_tcp *tcp, __u16 port)
     { return __bnt_tcp__set_dport_raw(tcp, port); }
 /** @ingroup bnt_tcp
- *  Sets the TCP sequence number without updating the checksum. */
+ *  Sets the TCP sequence number without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p tcp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_tcp__set_seq_no_csum(bnt_tcp *tcp, __u32 seq)
     { return __bnt_tcp__set_seq_raw(tcp, seq); }
 /** @ingroup bnt_tcp
- *  Sets the TCP acknowledgment number without updating the checksum. */
+ *  Sets the TCP acknowledgment number without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p tcp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_tcp__set_ack_seq_no_csum(bnt_tcp *tcp, __u32 ack_seq)
     { return __bnt_tcp__set_ack_seq_raw(tcp, ack_seq); }
 /** @ingroup bnt_tcp
- *  Sets the TCP flags bitmask without updating the checksum. */
+ *  Sets the TCP flags bitmask without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p tcp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_tcp__set_flags_no_csum(bnt_tcp *tcp, __u16 flags)
     { return __bnt_tcp__set_flags_raw(tcp, flags); }
 /** @ingroup bnt_tcp
- *  Sets the TCP window size without updating the checksum. */
+ *  Sets the TCP window size without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p tcp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_tcp__set_window_no_csum(bnt_tcp *tcp, __u16 window)
     { return __bnt_tcp__set_window_raw(tcp, window); }
 /** @ingroup bnt_tcp
- *  Sets the TCP urgent pointer without updating the checksum. */
+ *  Sets the TCP urgent pointer without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p tcp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_tcp__set_urg_ptr_no_csum(bnt_tcp *tcp, __u16 urg_ptr)
     { return __bnt_tcp__set_urg_ptr_raw(tcp, urg_ptr); }
 /** @ingroup bnt_tcp
- *  Sets the TCP data offset without updating the checksum. */
+ *  Sets the TCP data offset without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p tcp is NULL, or @p doff is not between 5 and 15.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_tcp__set_doff_no_csum(bnt_tcp *tcp, __u32 doff)
     { return __bnt_tcp__set_doff_raw(tcp, doff); }
 
 /** @ingroup bnt_udp
- *  Sets the UDP source port without updating the checksum. */
+ *  Sets the UDP source port without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p udp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_udp__set_sport_no_csum(bnt_udp *udp, __u16 port)
     { return __bnt_udp__set_sport_raw(udp, port); }
 /** @ingroup bnt_udp
- *  Sets the UDP destination port without updating the checksum. */
+ *  Sets the UDP destination port without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p udp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_udp__set_dport_no_csum(bnt_udp *udp, __u16 port)
     { return __bnt_udp__set_dport_raw(udp, port); }
 /** @ingroup bnt_udp
- *  Sets the UDP length field without updating the checksum. */
+ *  Sets the UDP length field without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p udp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_udp__set_len_no_csum(bnt_udp *udp, __u16 len)
     { return __bnt_udp__set_len_raw(udp, len); }
 
 /** @ingroup bnt_icmp4
- *  Sets the ICMPv4 type without updating the checksum. */
+ *  Sets the ICMPv4 type without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p icmp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_icmp4__set_type_no_csum(bnt_icmp4 *icmp, __u8 type)
     { return __bnt_icmp4__set_type_raw(icmp, type); }
 /** @ingroup bnt_icmp4
- *  Sets the ICMPv4 code without updating the checksum. */
+ *  Sets the ICMPv4 code without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p icmp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_icmp4__set_code_no_csum(bnt_icmp4 *icmp, __u8 code)
     { return __bnt_icmp4__set_code_raw(icmp, code); }
 /** @ingroup bnt_icmp4
- *  Sets the ICMPv4 echo identifier without updating the checksum. */
+ *  Sets the ICMPv4 echo identifier without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p icmp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_icmp4__set_echo_id_no_csum(bnt_icmp4 *icmp, __u16 id)
     { return __bnt_icmp4__set_echo_id_raw(icmp, id); }
 /** @ingroup bnt_icmp4
- *  Sets the ICMPv4 echo sequence number without updating the checksum. */
+ *  Sets the ICMPv4 echo sequence number without updating the checksum.
+ *
+ * @retval BNT_OK          on success.
+ * @retval BNT_ERR_BAD_ARG @p icmp is NULL.
+ * @retval BNT_ERR_TRUNC   the write falls outside the packet.
+ */
 static __always_inline int bnt_icmp4__set_echo_seq_no_csum(bnt_icmp4 *icmp, __u16 seq)
     { return __bnt_icmp4__set_echo_seq_raw(icmp, seq); }
 
@@ -1995,19 +1928,16 @@ static __always_inline int bnt_icmp6__set_echo_seq_no_csum(bnt_icmp6 *icmp, __u1
  * Covers the IPv4 header only.
  *
  * @param ip Parsed IPv4 view.
- * @retval BNT_OK          on success.
- * @retval BNT_ERR_BAD_ARG @p ip is NULL.
- * @retval BNT_ERR_TRUNC   the header falls outside the packet.
+ * @retval BNT_OK              on success.
+ * @retval BNT_ERR_BAD_ARG     @p ip is NULL.
+ * @retval BNT_ERR_TRUNC       the header falls outside the packet.
+ * @retval BNT_ERR_UNSUPPORTED the header has options (IHL is not 5).
  */
 static __always_inline int bnt_ipv4__recompute_csum(bnt_ipv4 *ip)
 {
     if (!ip)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_ipv4_recompute_csum_g(ip->__ctx, ip->__off);
-#else
-    return __bnt_ipv4__recompute_csum(ip);
-#endif
+    return __BNT_OP(__bnt_ipv4_recompute_csum)(ip->__ctx, ip->__off);
 }
 /**
  * @ingroup bnt_tcp
@@ -2023,15 +1953,11 @@ static __always_inline int bnt_ipv4__recompute_csum(bnt_ipv4 *ip)
  * @retval BNT_ERR_TRUNC   the segment exceeds @c BNT_MAX_PAYLOAD bytes, or a
  *                         read or write falls outside the packet.
  */
-static __always_inline int bnt_tcp__recompute_csum(bnt_tcp *tcp, bnt_ipv4 *ip4)
+static __always_inline int bnt_tcp__recompute_csum4(bnt_tcp *tcp, bnt_ipv4 *ip4)
 {
     if (!tcp || !ip4)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_tcp_recompute_csum_v4_g(tcp->__ctx, tcp->__off, ip4->__off);
-#else
-    return __bnt_tcp__recompute_csum_v4(tcp, ip4);
-#endif
+    return __BNT_OP(__bnt_tcp_recompute_csum_v4)(tcp->__ctx, tcp->__off, ip4->__off);
 }
 #if BNT_XDP_IPV6_CSUM_SUPPORT
 /* Off by default (BNT_XDP_IPV6_CSUM_SUPPORT): the verifier state grows too much
@@ -2055,11 +1981,7 @@ static __always_inline int bnt_tcp__recompute_csum6(bnt_tcp *tcp, bnt_ipv6 *ip6)
 {
     if (!tcp || !ip6)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_tcp_recompute_csum_v6_g(tcp->__ctx, tcp->__off, ip6->__off);
-#else
-    return __bnt_tcp__recompute_csum_v6(tcp, ip6);
-#endif
+    return __BNT_OP(__bnt_tcp_recompute_csum_v6)(tcp->__ctx, tcp->__off, ip6->__off);
 }
 #endif
 /**
@@ -2078,15 +2000,11 @@ static __always_inline int bnt_tcp__recompute_csum6(bnt_tcp *tcp, bnt_ipv6 *ip6)
  * @retval BNT_ERR_TRUNC   the segment exceeds @c BNT_MAX_PAYLOAD bytes, or a
  *                         read or write falls outside the packet.
  */
-static __always_inline int bnt_udp__recompute_csum(bnt_udp *udp, bnt_ipv4 *ip4)
+static __always_inline int bnt_udp__recompute_csum4(bnt_udp *udp, bnt_ipv4 *ip4)
 {
     if (!udp || !ip4)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_udp_recompute_csum_v4_g(udp->__ctx, udp->__off, ip4->__off);
-#else
-    return __bnt_udp__recompute_csum_v4(udp, ip4);
-#endif
+    return __BNT_OP(__bnt_udp_recompute_csum_v4)(udp->__ctx, udp->__off, ip4->__off);
 }
 #if BNT_XDP_IPV6_CSUM_SUPPORT
 /* See the disabled TCP/IPv6 recompute wrapper above. */
@@ -2111,11 +2029,7 @@ static __always_inline int bnt_udp__recompute_csum6(bnt_udp *udp, bnt_ipv6 *ip6)
 {
     if (!udp || !ip6)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_udp_recompute_csum_v6_g(udp->__ctx, udp->__off, ip6->__off);
-#else
-    return __bnt_udp__recompute_csum_v6(udp, ip6);
-#endif
+    return __BNT_OP(__bnt_udp_recompute_csum_v6)(udp->__ctx, udp->__off, ip6->__off);
 }
 #endif
 /**
@@ -2137,11 +2051,7 @@ static __always_inline int bnt_icmp4__recompute_csum(bnt_icmp4 *icmp, __u16 icmp
 {
     if (!icmp)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_icmp4_recompute_csum_g(icmp->__ctx, icmp->__off, icmp_len);
-#else
-    return __bnt_icmp4__recompute_csum(icmp, icmp_len);
-#endif
+    return __BNT_OP(__bnt_icmp4_recompute_csum)(icmp->__ctx, icmp->__off, icmp_len);
 }
 #if BNT_XDP_IPV6_CSUM_SUPPORT
 /* See the disabled TCP/IPv6 recompute wrapper above. */
@@ -2166,17 +2076,12 @@ static __always_inline int bnt_icmp6__recompute_csum(bnt_icmp6 *icmp, bnt_ipv6 *
 {
     if (!icmp || !ip6)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_icmp6_recompute_csum_g(icmp->__ctx, icmp->__off, ip6->__off, icmp_len);
-#else
-    return __bnt_icmp6__recompute_csum(icmp, ip6, icmp_len);
-#endif
+    return __BNT_OP(__bnt_icmp6_recompute_csum)(icmp->__ctx, icmp->__off, ip6->__off, icmp_len);
 }
 #endif
 
 
 
-#if !BNT_INLINE_ALL
 /* Fixed-size wrapper so a BPF global infers the full segment-buffer size (a bare
  * `struct in6_addr *` arg would be sized as a single 16-byte element). */
 struct __bnt_srv6_segs { struct in6_addr s[BNT_SRV6_MAX_SEGS]; };
@@ -2185,12 +2090,7 @@ struct __bnt_srv6_segs { struct in6_addr s[BNT_SRV6_MAX_SEGS]; };
  * into a single subprogram. Like the IPv6 1G insert, each packet write after
  * bpf_xdp_adjust_head needs a barrier on its derived offset (here: the base/SRH
  * write at `off`, and each segment write at `so`). */
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
-                             struct __bnt_srv6_segs *segs, __u8 n_segs);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
+static __always_inline int __bnt_ipv6_insert_srh(struct xdp_md *ctx, __u32 off,
                              struct __bnt_srv6_segs *segs, __u8 n_segs)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
@@ -2274,6 +2174,18 @@ int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
     }
     return BNT_OK;
 }
+
+#if !BNT_INLINE_ALL
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
+                             struct __bnt_srv6_segs *segs, __u8 n_segs);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_ipv6_insert_srh_g(struct xdp_md *ctx, __u32 off,
+                             struct __bnt_srv6_segs *segs, __u8 n_segs)
+{
+    return __bnt_ipv6_insert_srh(ctx, off, segs, n_segs);
+}
 #endif
 #endif /* !BNT_INLINE_ALL */
 
@@ -2307,7 +2219,6 @@ static __always_inline int bnt_ipv6__insert_srh(bnt_ipv6 *ip6,
     if (!ip6 || !segs || !n_segs || n_segs > BNT_SRV6_MAX_SEGS)
         return BNT_ERR_BAD_ARG;
 
-#if !BNT_INLINE_ALL
     {
         /* One global for the whole operation. Copy the (possibly rodata) segment
          * list to a writable stack buffer first (a global's pointer arg is assumed
@@ -2319,133 +2230,15 @@ static __always_inline int bnt_ipv6__insert_srh(bnt_ipv6 *ip6,
             if (i < n_segs)
                 __builtin_memcpy(&segbuf.s[i], &segs[i], sizeof(struct in6_addr));
 
-        return __bnt_ipv6_insert_srh_g(ip6->__ctx, ip6->__off, &segbuf, n_segs);
+        return __BNT_OP(__bnt_ipv6_insert_srh)(ip6->__ctx, ip6->__off, &segbuf, n_segs);
     }
-#else
-    {
-        __u32 srh_size = (__u32)sizeof(struct bnt_sr_hdr) +
-                         (__u32)n_segs * (__u32)sizeof(struct in6_addr);
-        __u8 orig_nexthdr;
-        __u32 srh_off, segs_off, i;
-        __u16 old_plen, new_plen;
-        int ret;
-
-#if (BNT_INLINE_ALL && !BNT_LEGACY_KERNEL)
-        {
-            struct ipv6hdr *hdr;
-            struct bnt_sr_hdr *srh;
-
-            ret = __bnt_data_ptr(ip6->__ctx, ip6->__off, sizeof(*hdr), (void **)&hdr);
-            if (ret)
-                return ret;
-            if (((*(__u8 *)hdr) >> 4) != 6)
-                return BNT_ERR_BAD_PROTO;
-            orig_nexthdr = hdr->nexthdr;
-            old_plen     = bpf_ntohs(hdr->payload_len);
-            if ((__u32)old_plen + srh_size > 0xffffu)
-                return BNT_ERR_TRUNC;
-            new_plen = (__u16)(old_plen + (__u16)srh_size);
-
-            ret = __bnt_shift_insert(ip6->__ctx,
-                                           ip6->__off + (__u32)sizeof(struct ipv6hdr),
-                                           srh_size);
-            if (ret)
-                return ret;
-
-            ret = __bnt_data_ptr(ip6->__ctx, ip6->__off, sizeof(*hdr), (void **)&hdr);
-            if (ret)
-                return ret;
-            hdr->nexthdr     = NEXTHDR_ROUTING;
-            hdr->payload_len = bpf_htons(new_plen);
-
-            srh_off = ip6->__off + (__u32)sizeof(struct ipv6hdr);
-            ret = __bnt_data_ptr(ip6->__ctx, srh_off, sizeof(*srh), (void **)&srh);
-            if (ret)
-                return ret;
-            __builtin_memset(srh, 0, sizeof(*srh));
-            srh->nexthdr       = orig_nexthdr;
-            srh->hdrlen        = (__u8)(n_segs * 2u);
-            srh->type          = 4;
-            srh->segments_left = n_segs - 1;
-            srh->first_segment = n_segs - 1;
-        }
-#else
-        {
-            struct ipv6hdr hdr = {};
-
-            ret = __bnt_read(ip6->__ctx, ip6->__off, &hdr, sizeof(hdr));
-            if (ret)
-                return ret;
-            if (((*(__u8 *)&hdr) >> 4) != 6)
-                return BNT_ERR_BAD_PROTO;
-            orig_nexthdr = hdr.nexthdr;
-            old_plen     = bpf_ntohs(hdr.payload_len);
-            if ((__u32)old_plen + srh_size > 0xffffu)
-                return BNT_ERR_TRUNC;
-            new_plen = (__u16)(old_plen + (__u16)srh_size);
-
-            ret = __bnt_shift_insert(ip6->__ctx,
-                                           ip6->__off + (__u32)sizeof(struct ipv6hdr),
-                                           srh_size);
-            if (ret)
-                return ret;
-
-            hdr.nexthdr     = NEXTHDR_ROUTING;
-            hdr.payload_len = bpf_htons(new_plen);
-            ret = __bnt_write(ip6->__ctx, ip6->__off, &hdr, sizeof(hdr));
-            if (ret)
-                return ret;
-
-            srh_off = ip6->__off + (__u32)sizeof(struct ipv6hdr);
-            {
-                struct bnt_sr_hdr srh = {};
-                srh.nexthdr       = orig_nexthdr;
-                srh.hdrlen        = (__u8)(n_segs * 2u);
-                srh.type          = 4;
-                srh.segments_left = n_segs - 1;
-                srh.first_segment = n_segs - 1;
-                ret = __bnt_write(ip6->__ctx, srh_off, &srh, sizeof(srh));
-                if (ret)
-                    return ret;
-            }
-        }
-#endif
-
-        segs_off = srh_off + (__u32)sizeof(struct bnt_sr_hdr);
-#pragma unroll
-        for (i = 0; i < BNT_SRV6_MAX_SEGS; i++) {
-            __u8 rev;
-
-            if (i >= (__u32)n_segs)
-                break;
-            rev = n_segs - 1 - (__u8)i;
-            if (rev >= BNT_SRV6_MAX_SEGS)
-                return BNT_ERR_BAD_ARG;
-#if BNT_LEGACY_KERNEL || __clang_major__ >= 22
-            asm volatile("" : "+r"(rev));   /* clang>=22: keep the clamp below from being elided */
-#endif
-            rev &= (__u8)(BNT_SRV6_MAX_SEGS - 1u);  /* verifier bound, see _g path */
-            ret = __bnt_write(ip6->__ctx,
-                               segs_off + i * (__u32)sizeof(struct in6_addr),
-                               &segs[rev], sizeof(struct in6_addr));
-            if (ret)
-                return ret;
-        }
-        return BNT_OK;
-    }
-#endif
 }
 
 /** Pushes one MPLS label after Ethernet/VLAN; BOS is set automatically. */
-#if !BNT_INLINE_ALL
 /* One-global insert: Ethernet/VLAN walk (also yields the EtherType for the BOS
  * bit) + shift + LSE/ethertype write, fused. Barrier on prefix_len for the
  * post-adjust write (see __bnt_eth_insert_ipv6_g). */
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc, __u8 ttl);
-#if !BNT_ASM_GLOBALS
-__attribute__((noinline, weak, nonnull(1)))
-int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc, __u8 ttl)
+static __always_inline int __bnt_eth_insert_mpls(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc, __u8 ttl)
 {
     BNT_TIGHTEN_OFFSET(off, BNT_XDP_MAX_PACKET_OFFSET);
     void *p;
@@ -2499,8 +2292,18 @@ int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc,
     __BNT_PKT_STORE(*(__be16 *)p, bpf_htons(ETH_P_MPLS_UC));
     return BNT_OK;
 }
+
+#if !BNT_INLINE_ALL
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc, __u8 ttl);
+#if !BNT_ASM_GLOBALS
+__attribute__((noinline, weak, nonnull(1)))
+int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc, __u8 ttl)
+{
+    return __bnt_eth_insert_mpls(ctx, off, label, tc, ttl);
+}
 #endif
-#endif
+#endif /* !BNT_INLINE_ALL */
 
 /**
  * @ingroup bnt_eth
@@ -2514,6 +2317,9 @@ int __bnt_eth_insert_mpls_g(struct xdp_md *ctx, __u32 off, __u32 label, __u8 tc,
  *
  * @note The header prefix before the insertion point must not exceed
  * @c BNT_XDP_MAX_HEADER_PREFIX bytes; beyond it, returns BNT_ERR_TOO_DEEP.
+ * Unless @p eth is at offset 0 with no VLAN tag (a prefix of the Ethernet
+ * header alone), the packet must hold @c BNT_XDP_MAX_HEADER_PREFIX bytes;
+ * shorter, returns BNT_ERR_TRUNC. On an error the packet is left unchanged.
  * Views for headers after @p eth become stale; re-parse them.
  *
  * @param eth   Parsed Ethernet view.
@@ -2533,38 +2339,7 @@ static __always_inline int bnt_eth__insert_mpls(bnt_eth *eth,
 {
     if (!eth || label > 0xFFFFFu)
         return BNT_ERR_BAD_ARG;
-#if !BNT_INLINE_ALL
-    return __bnt_eth_insert_mpls_g(eth->__ctx, eth->__off, label, tc, ttl);
-#else
-    {
-        struct __bnt_eth_meta meta;
-        __be32 lse;
-        bool bos;
-        __u32 prefix_len;
-        int ret;
-
-        ret = __bnt_eth_meta(eth, &meta);
-        if (ret)
-            return ret;
-
-        /* BOS=1 when the existing EtherType is not MPLS (this label is the bottom). */
-        bos = (meta.proto != ETH_P_MPLS_UC && meta.proto != ETH_P_MPLS_MC);
-        lse = bpf_htonl((label << 12) |
-                         ((__u32)(tc & 0x7u) << 9) |
-                         (bos ? (1u << 8) : 0u) |
-                         (__u32)ttl);
-
-        prefix_len = eth->__off + meta.hlen;
-        ret = __bnt_shift_insert_4(eth->__ctx, prefix_len);
-        if (ret)
-            return ret;
-
-        ret = bnt_eth__set_ethertype(eth, ETH_P_MPLS_UC);
-        if (ret)
-            return ret;
-        return __bnt_write(eth->__ctx, prefix_len, &lse, sizeof(lse));
-    }
-#endif
+    return __BNT_OP(__bnt_eth_insert_mpls)(eth->__ctx, eth->__off, label, tc, ttl);
 }
 
 #if !BNT_INLINE_ALL && BNT_ASM_GLOBALS

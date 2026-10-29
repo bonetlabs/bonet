@@ -16,7 +16,7 @@
  * Validation goal:
  *   - validates bnt_ipv4__set_daddr_no_csum() and bnt_udp__set_dport_no_csum()
  *   - validates bnt_ipv4__recompute_csum() on the TC (skb) backend
- *   - validates bnt_udp__recompute_csum() (full UDP checksum with payload loop)
+ *   - validates bnt_udp__recompute_csum4() (full UDP checksum with payload loop)
  *   - exercises the BPF verifier with the BNT_MAX_PAYLOAD iteration bound on TC
  *
  * Behavior:
@@ -105,7 +105,7 @@ int tc_udp_dnat_recompute(struct __sk_buff *skb)
     if (ret)
         return TC_ACT_SHOT;
 
-    ret = bnt_udp__recompute_csum(&udp, &ip4);
+    ret = bnt_udp__recompute_csum4(&udp, &ip4);
     if (ret)
         return TC_ACT_SHOT;
 

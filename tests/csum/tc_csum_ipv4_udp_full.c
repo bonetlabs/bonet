@@ -78,7 +78,7 @@ int tc_csum_ipv4_udp_full(struct __sk_buff *skb)
     ret = bnt_ipv4__recompute_csum(&ip4);
     if (ret)
         return TC_ACT_SHOT;
-    ret = bnt_udp__recompute_csum(&udp, &ip4);
+    ret = bnt_udp__recompute_csum4(&udp, &ip4);
     if (ret)
         return TC_ACT_SHOT;
 

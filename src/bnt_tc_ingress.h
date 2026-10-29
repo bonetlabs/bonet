@@ -368,7 +368,7 @@ static __always_inline int bnt_eth__insert_ipv4(bnt_eth *eth,
     __wsum csum;
     int ret;
 
-    ret = __bnt_eth_meta(eth, &meta);
+    ret = __bnt_eth_meta_view(eth, &meta);
     if (ret)
         return ret;
 
@@ -421,7 +421,7 @@ static __always_inline int bnt_eth__insert_ipv6(bnt_eth *eth,
     if (!saddr || !daddr)
         return BNT_ERR_BAD_ARG;
 
-    ret = __bnt_eth_meta(eth, &meta);
+    ret = __bnt_eth_meta_view(eth, &meta);
     if (ret)
         return ret;
 
@@ -462,7 +462,7 @@ static __always_inline int bnt_eth__remove_ipv4(bnt_eth *eth)
     __u32 prefix_len;
     int ret;
 
-    ret = __bnt_eth_meta(eth, &meta);
+    ret = __bnt_eth_meta_view(eth, &meta);
     if (ret)
         return ret;
     if (meta.proto != ETH_P_IP)
@@ -495,7 +495,7 @@ static __always_inline int bnt_eth__remove_ipv6(bnt_eth *eth)
     __u32 prefix_len;
     int ret;
 
-    ret = __bnt_eth_meta(eth, &meta);
+    ret = __bnt_eth_meta_view(eth, &meta);
     if (ret)
         return ret;
     if (meta.proto != ETH_P_IPV6)
@@ -595,13 +595,13 @@ static __always_inline int bnt_icmp6__set_echo_seq_no_csum(bnt_icmp6 *icmp, __u1
 static __always_inline int bnt_ipv4__recompute_csum(bnt_ipv4 *ip)
     { return __bnt_ipv4__recompute_csum(ip); }
 /** Recomputes the full TCP checksum over the IPv4 pseudo-header and payload. */
-static __always_inline int bnt_tcp__recompute_csum(bnt_tcp *tcp, bnt_ipv4 *ip4)
+static __always_inline int bnt_tcp__recompute_csum4(bnt_tcp *tcp, bnt_ipv4 *ip4)
     { return __bnt_tcp__recompute_csum_v4(tcp, ip4); }
 /** Recomputes the full TCP checksum over the IPv6 pseudo-header and payload. */
 static __always_inline int bnt_tcp__recompute_csum6(bnt_tcp *tcp, bnt_ipv6 *ip6)
     { return __bnt_tcp__recompute_csum_v6(tcp, ip6); }
 /** Recomputes the full UDP checksum over the IPv4 pseudo-header and payload. */
-static __always_inline int bnt_udp__recompute_csum(bnt_udp *udp, bnt_ipv4 *ip4)
+static __always_inline int bnt_udp__recompute_csum4(bnt_udp *udp, bnt_ipv4 *ip4)
     { return __bnt_udp__recompute_csum_v4(udp, ip4); }
 /** Recomputes the full UDP checksum over the IPv6 pseudo-header and payload. */
 static __always_inline int bnt_udp__recompute_csum6(bnt_udp *udp, bnt_ipv6 *ip6)
@@ -708,7 +708,7 @@ static __always_inline int bnt_eth__insert_mpls(bnt_eth *eth,
     if (!eth || label > 0xFFFFFu)
         return BNT_ERR_BAD_ARG;
 
-    ret = __bnt_eth_meta(eth, &meta);
+    ret = __bnt_eth_meta_view(eth, &meta);
     if (ret)
         return ret;
 

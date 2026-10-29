@@ -76,6 +76,10 @@ pkt6vlan = MAC_D + MAC_S + b'\x81\x00\x00\x0a\x86\xdd' + ip6(17, udp())
 pkt6frag = eth(0x86dd) + ip6(44, bytes([17, 0, 0, 1]) + b'\x00\x00\x00\x07' + udp())   # frag hdr, M=1
 pkt6ext = eth(0x86dd) + ip6(0, bytes([60, 0]) + bytes(6) + bytes([17, 0]) + bytes(6) + udp())  # HOP, DEST
 pkt6in6 = eth(0x86dd) + ip6(41, ip6(17, udp()))
+ra6 = struct.pack('!BBHBBHII', 134, 0, 0, 64, 0xc8, 1800, 0, 0)      # RA, M|O, preference high
+pkt6ra = eth(0x86dd) + ip6(58, ra6)
+pkt6fragext = eth(0x86dd) + ip6(0, bytes([44, 0]) + bytes(6) + bytes([17, 0, 0, 1]) + b'\x00\x00\x00\x07' + udp())  # HOP, frag
+mpls4 = eth(0x8847) + struct.pack('!I', 100 << 12 | 1 << 8 | 64) + ip4(17, udp())
 arp = eth(0x0806) + struct.pack('!HHBBH6s4s6s4s', 1, 0x0800, 6, 4, 1, MAC_S, A4, bytes(6), B4)
 short4 = pkt4[:30]
 FF = b'\xff' * 32
@@ -92,9 +96,8 @@ CASES = [
     ('read_in6', 'ok', pkt6, [CTX, 22, OUT], b''), ('read_in6', 'trunc', pkt6[:40], [CTX, 30, OUT], FF),
     ('write_u8', 'ok', pkt4, [CTX, 22, 9], b''), ('write_be16', 'ok', pkt4, [CTX, 34, 0x5000], b''),
     ('write_be32', 'ok', pkt4, [CTX, 30, 0x0a000009], b''), ('write_mac', 'ok', pkt4, [CTX, 0, OUT], MAC),
-    ('write_in6', 'ok', pkt6, [CTX, 22, OUT], IN6), ('write_be32', 'trunc', short4, [CTX, 28, 1], b''),
-    ('csum_blk', 'ok', pkt4, [CTX, 0, 0, OUT], b''), ('csum_word', 'ok', pkt4, [CTX, 14, 0x1234, OUT], b''),
-    ('csum_byte', 'ok', pkt4, [CTX, 20, OUT], b''), ('csum_blk', 'trunc', short4, [CTX, 0, 0, OUT], b''),
+    ('write_be32', 'trunc', short4, [CTX, 28, 1], b''),
+    ('csum_blk', 'ok', pkt4, [CTX, 0, 0, OUT], b''), ('csum_blk', 'trunc', short4, [CTX, 0, 0, OUT], b''),
     # navigation and metadata
     ('eth_next_off', 'plain', pkt4, [CTX, 0, OUT], b''), ('eth_next_off', 'vlan', pkt6vlan, [CTX, 0, OUT], b''),
     ('ipv4_next_off', 'plain', pkt4, [CTX, 14, OUT], b''), ('ipv4_next_off', 'opts', pkt4opt, [CTX, 14, OUT], b''),
@@ -105,9 +108,6 @@ CASES = [
     ('ipv6_next_off', 'frag', pkt6frag, [CTX, 14, OUT], b''),
     ('tcp_next_off', 'plain', pkt4, [CTX, 34, OUT], b''), ('tcp_next_off', 'opts', pkt4opt, [CTX, 38, OUT], b''),
     ('eth_meta', 'plain', pkt4, [CTX, 0, OUT], b''), ('eth_meta', 'vlan', pkt6vlan, [CTX, 0, OUT], b''),
-    ('ipv4_meta', 'plain', pkt4, [CTX, 14, OUT], b''), ('ipv4_meta', 'frag', pkt4frag, [CTX, 14, OUT], b''),
-    ('ipv6_meta', 'plain', pkt6, [CTX, 14, OUT], b''), ('ipv6_meta', 'ext', pkt6ext, [CTX, 14, OUT], b''),
-    ('ipv6_meta', 'frag', pkt6frag, [CTX, 14, OUT], b''), ('arp_meta', 'ok', arp, [CTX, 14, OUT], b''),
     # find
     ('ctx_find_ipv4', 'plain', pkt4, [CTX, OUT], b''), ('ctx_find_ipv4', 'vlan', pkt4vlan, [CTX, OUT], b''),
     ('ctx_find_ipv6', 'plain', pkt6, [CTX, OUT], b''),
@@ -117,12 +117,6 @@ CASES = [
     ('ctx_find_udp', 'v6vlan', pkt6vlan, [CTX, OUT], b''), ('ctx_find_udp', 'v6ext', pkt6ext, [CTX, OUT], b''),
     ('ctx_find_icmp4', 'ok', pkt4icmp, [CTX, OUT], b''), ('ctx_find_icmp6', 'ok', pkt6icmp, [CTX, OUT], b''),
     # incremental and full checksums
-    ('l3_csum16', 'ok', pkt4, [CTX, 24, 0x4000, 0x0000], b''),
-    ('l3_csum32', 'ok', pkt4, [CTX, 24, 0x0100000a, 0x0200000a], b''),
-    ('l4_csum16', 'ok', pkt4, [CTX, 50, 0x0050, 0x1f90, 0], b''),
-    ('l4_csum32', 'ok', pkt4, [CTX, 50, 0x0100000a, 0x0900000a, 0], b''),
-    ('l4_pseudo_csum16', 'udp', pkt4udp, [CTX, 40, 0x3500, 0x3600, 1], b''),
-    ('l4_pseudo_csum32', 'udp', pkt4udp, [CTX, 40, 0x0100000a, 0x0900000a, 1], b''),
     ('ipv4_recompute_csum', 'ok', pkt4, [CTX, 14], b''),
     ('tcp_recompute_csum_v4', 'ok', pkt4, [CTX, 34, 14], b''),
     ('tcp_recompute_csum_v6', 'ok', pkt6tcp, [CTX, 54, 14], b''),
@@ -142,13 +136,40 @@ CASES = [
     ('ipv6_set_addr', 'udp', pkt6, [CTX, 14, OUT, 1], IN6), ('ipv6_set_addr', 'tcp', pkt6tcp, [CTX, 14, OUT, 0], IN6),
     ('ipv6_set_addr', 'ext', pkt6ext, [CTX, 14, OUT, 1], IN6),
     ('ipv6_set_frag_flag', 'm_off', pkt6frag, [CTX, 14, 1, 0], b''),
-    ('ipv6_set_frag_off_flags', 'ok', pkt6frag, [CTX, 14, 0x0010], b''),
     ('tcp_set_port', 'dst', pkt4, [CTX, 34, 0x5000, 1], b''), ('tcp_set_seq', 'seq', pkt4, [CTX, 34, 0x11223344, 0], b''),
     ('tcp_set_seq', 'ack', pkt4, [CTX, 34, 0x55667788, 1], b''), ('tcp_set_flag', 'syn', pkt4, [CTX, 34, 0x0002, 1], b''),
     ('udp_set_port', 'src', pkt4udp, [CTX, 34, 0x1111, 0], b''), ('udp_set_port', 'csum0', pkt4udp0, [CTX, 34, 0x2222, 1], b''),
     ('icmp_set_typecode', 'type', pkt4icmp, [CTX, 34, 0, 0], b''),
     ('icmp_set_echo', 'seq', pkt4icmp, [CTX, 34, 0x9999, 1], b''), ('icmp_set_echo', 'id', pkt4icmp, [CTX, 34, 0x7777, 0], b''),
     ('icmp6_set_advert_flag', 'override_off', pkt6na, [CTX, 54, 0x20, 0, 1], b''),
+    ('ipv4_set_total_len', 'ok', pkt4, [CTX, 14, 70], b''), ('ipv4_set_total_len', 'udp', pkt4udp, [CTX, 14, 60], b''),
+    ('ipv4_set_id', 'ok', pkt4, [CTX, 14, 0x1234], b''), ('ipv4_set_frag_off', 'ok', pkt4, [CTX, 14, 0x2000], b''),
+    ('ipv4_set_hlen', 'ok', pkt4opt, [CTX, 14, 20], b''), ('ipv4_set_hlen_raw', 'ok', pkt4opt, [CTX, 14, 24], b''),
+    ('tcp_set_flags', 'ok', pkt4, [CTX, 34, 0x12], b''), ('tcp_set_flags_raw', 'ok', pkt4, [CTX, 34, 0x12], b''),
+    ('tcp_set_window', 'ok', pkt4, [CTX, 34, 0x4000], b''), ('tcp_set_urg_ptr', 'ok', pkt4, [CTX, 34, 7], b''),
+    ('tcp_set_doff', 'ok', pkt4opt, [CTX, 38, 5], b''), ('tcp_set_doff_raw', 'ok', pkt4opt, [CTX, 38, 6], b''),
+    ('udp_set_len', 'ok', pkt4udp, [CTX, 34, 30], b''),
+    ('ipv6_set_payload_len', 'udp', pkt6, [CTX, 14, 30], b''), ('ipv6_set_payload_len', 'ext', pkt6ext, [CTX, 14, 46], b''),
+    ('ipv6_set_vtcflow', 'tc', pkt6, [CTX, 14, 0x0ff00000, 0x02a00000], b''),
+    ('icmp6_ra_flags', 'ok', pkt6ra, [CTX, 54, OUT], b''), ('icmp6_na_flags', 'ok', pkt6na, [CTX, 54, OUT], b''),
+    ('icmp6_set_ra_pref', 'ok', pkt6ra, [CTX, 54, 3], b''),
+    ('arp_get_sha', 'ok', arp, [CTX, 14, OUT], b''), ('arp_set_sha', 'ok', arp, [CTX, 14, OUT], MAC),
+    ('arp_get_spa', 'ok', arp, [CTX, 14, OUT], b''), ('arp_set_spa', 'ok', arp, [CTX, 14, 0x0900000a], b''),
+    ('arp_get_tha', 'ok', arp, [CTX, 14, OUT], b''), ('arp_set_tha', 'ok', arp, [CTX, 14, OUT], MAC),
+    ('arp_get_tpa', 'ok', arp, [CTX, 14, OUT], b''), ('arp_set_tpa', 'ok', arp, [CTX, 14, 0x0900000a], b''),
+    ('arp_hlen', 'ok', arp, [CTX, 14, OUT], b''), ('arp_is_eth_ipv4', 'ok', arp, [CTX, 14, OUT], b''),
+    ('ctx_find_arp', 'ok', arp, [CTX, OUT], b''),
+    ('mpls_set_lse', 'ttl', mpls4, [CTX, 14, 0xff, 9], b''), ('mpls_next_ip', 'v4', mpls4, [CTX, 14, 4], b''),
+    ('eth_set_ethertype', 'plain', pkt4, [CTX, 0, 0x86dd], b''), ('eth_set_ethertype', 'vlan', pkt6vlan, [CTX, 0, 0x0800], b''),
+    ('eth_vlan_tci', 'get', pkt6vlan, [CTX, 0, 0, 0, OUT], b''), ('eth_vlan_tci', 'set', pkt6vlan, [CTX, 0, 0, 0x0fff0123, OUT], b''),
+    ('eth_info', 'plain', pkt4, [CTX, 0, OUT], b''), ('eth_info', 'vlan', pkt6vlan, [CTX, 0, OUT], b''),
+    ('ipv6_next_proto_off', 'plain', pkt6, [CTX, 14, OUT, OUT + 8], b''),
+    ('ipv6_next_proto_off', 'ext', pkt6ext, [CTX, 14, OUT, OUT + 8], b''),
+    ('ipv6_ext_depth', 'ext', pkt6ext, [CTX, 14, OUT], b''),
+    ('ipv6_has_frag_hdr', 'plain', pkt6, [CTX, 14, OUT], b''), ('ipv6_has_frag_hdr', 'frag', pkt6frag, [CTX, 14, OUT], b''),
+    ('ipv6_is_frag', 'frag', pkt6frag, [CTX, 14, OUT], b''),
+    ('ipv6_frag_off_flags', 'frag', pkt6frag, [CTX, 14, OUT], b''), ('ipv6_frag_off_flags', 'ext', pkt6fragext, [CTX, 14, OUT], b''),
+    ('ipv6_l4_meta', 'ext', pkt6ext, [CTX, 14, OUT], b''),
     # FIB (the lookup result depends on the routing table, see COMPARE)
     ('ipv4_fib_lookup', 'ok', pkt4, [CTX, 14, OUT], b''), ('ipv4_fib_lookup', 'trunc', short4, [CTX, 14, OUT], b''),
     ('ipv6_fib_lookup', 'ok', pkt6, [CTX, 14, OUT], b''),
@@ -164,4 +185,4 @@ CASES = [
 ]
 
 COMPARE = {'ipv4_fib_lookup': 'no_out', 'ipv6_fib_lookup': 'no_out',
-           'csum_blk': 'csum32', 'csum_word': 'csum32'}
+           'csum_blk': 'csum32'}

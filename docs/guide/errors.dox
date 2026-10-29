@@ -5,6 +5,9 @@ Every function returns an @c int status from @c enum @c bnt_status. @c BNT_OK is
 zero; any non-zero value is an error. Check the status where a failure would
 change the program's outcome.
 
+A call that returns an error leaves the packet as it was: every bound is
+checked before the first write.
+
 | Code                  | Returned when                                                              |
 | --------------------- | ------------------------------------------------------------------------- |
 | @c BNT_OK             | success                                                                   |

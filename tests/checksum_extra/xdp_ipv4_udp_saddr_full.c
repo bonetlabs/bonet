@@ -153,7 +153,7 @@ int xdp_ipv4_udp_saddr_full_udp_csum(struct xdp_md *ctx)
         return XDP_ABORTED;
     }
 
-    ret = bnt_udp__recompute_csum(&udp, &ip4);
+    ret = bnt_udp__recompute_csum4(&udp, &ip4);
     if (ret) {
         bnt_test_fail_detail((__u64)(unsigned int)ret, PORT_TO, 6, 0, 0);
         return XDP_ABORTED;

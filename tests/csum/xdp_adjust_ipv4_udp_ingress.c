@@ -100,7 +100,7 @@ int xdp_adjust_ipv4_udp_ingress(struct xdp_md *ctx)
     if (ret)
         return XDP_ABORTED;
 
-    ret = bnt_udp__recompute_csum(&udp, &ip4);
+    ret = bnt_udp__recompute_csum4(&udp, &ip4);
     if (ret)
         return XDP_ABORTED;
 
