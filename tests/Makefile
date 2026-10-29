@@ -28,11 +28,12 @@ $(CLIENT): $(GO_SOURCES) | $(BIN_DIR)
 server client:
 	./run_tests.sh --suite $(SUITE) $@ $(RUN_ARGS)
 
-# Single-machine tests (need root): every global loaded on its own, and every
-# global run on prepared packets.
+# Single-machine tests (need root): every global loaded on its own, every
+# global run on prepared packets, and every public API checked against a model.
 check-local:
 	$(MAKE) -C globals check
 	$(MAKE) -C units check
+	$(MAKE) -C api check
 
 server-% client-%:
 	./run_tests.sh --suite $* $(firstword $(subst -, ,$@)) $(RUN_ARGS)

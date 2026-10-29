@@ -22,6 +22,8 @@ programs:
   `bnt_test_result` map ABI used by map-backed suites.
 - `globals/` loads every XDP global on its own.
 - `units/` calls every XDP global on prepared packets and checks the results.
+- `api/` calls every public XDP API, in the default build (asm globals), and
+  checks the results against a reference model.
 
 `globals/` and `units/` run on one machine (see below). The other suites run
 between two machines; each owns a `tests.csv` file, loaded on every runner
@@ -49,9 +51,17 @@ three builds,
 and compares the return value, the output buffer and the packet with
 `expected.json`. After an intended behaviour change, record new results with
 `make -C units update-expected`. For the FIB lookups the output buffer is not
-compared, since it depends on the routing table; for `csum_blk` and `csum_word`
+compared, since it depends on the routing table; for `csum_blk`
 it is compared folded to 16 bits, since the raw `bpf_csum_diff` value changes
 with the kernel version.
+
+`api/` builds one program per public API (`gen_programs.py`) and runs it on
+the cases of `cases.py`: a corpus of packets, each cut at every length, plus
+NULL pointers, out-of-range offsets and boundary arguments. `model.py` gives
+the expected result from the protocols, not from the C code; a call that fails
+must leave the packet unchanged. `check.py report` lists the failing cases.
+`make -C api coverage` reports branch coverage, on the interpreter of
+`validation/exec_metrics`.
 
 ## Configuration
 

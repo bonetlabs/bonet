@@ -3,3 +3,5 @@
 config.ini
 /globals/build/
 /units/build/
+/api/build/
+__pycache__/
