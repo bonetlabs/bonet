@@ -480,6 +480,11 @@ static __always_inline int __bnt_csum_range(struct xdp_md *ctx, __u32 off, __u32
     __u32 cur = off;
     int   ret;
 
+    /* Without the barrier clang knows n_chunks is small, drops the constant
+     * loop bound and keeps only n_chunks; kernels before 6.4 lose its bound
+     * when it is spilled as 32 bits. */
+    asm volatile("" : "+r"(n_chunks));
+
     /* The whole range is tested once, so no block can fall outside the
      * packet and their results need no test. */
     if (off + len > __bnt_len(ctx))
@@ -2102,7 +2107,7 @@ static __always_inline int __bnt_ipv6_insert_srh(struct xdp_md *ctx, __u32 off,
     __u32 srh_size, segs_off, prefix, i;
     int ret;
 
-    if (!segs || !n_segs || n_segs > BNT_SRV6_MAX_SEGS)
+    if (!segs)
         return BNT_ERR_BAD_ARG;
     srh_size = (__u32)sizeof(struct bnt_sr_hdr) +
                (__u32)n_segs * (__u32)sizeof(struct in6_addr);
@@ -2248,8 +2253,6 @@ static __always_inline int __bnt_eth_insert_mpls(struct xdp_md *ctx, __u32 off, 
     __u32 hlen = sizeof(struct ethhdr), cur, prefix_len, i;
     int ret;
 
-    if (label > 0xFFFFFu)
-        return BNT_ERR_BAD_ARG;
 
     /* walk Ethernet + VLAN inline; proto also drives the BOS bit */
     ret = __bnt_data_ptr(ctx, off + offsetof(struct ethhdr, h_proto), sizeof(__be16), &p);

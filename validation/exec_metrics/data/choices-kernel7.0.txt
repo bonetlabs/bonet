@@ -14,7 +14,7 @@ eth_next_off: clang20-O2+merlin_llvm
 eth_remove_ipv4: gcc16-base-Os
 eth_remove_ipv6: gcc16-base-Os
 eth_remove_vlan: clang16-O2
-icmp4_recompute_csum: clang18-O2+merlin_bc
+icmp4_recompute_csum: clang22-O2+merlin_bc
 icmp6_recompute_csum: clang20-O2+merlin_llvm+merlin_bc
 icmp6_set_advert_flag: gcc16-base-O1
 icmp_set_echo: clang20-O2 (unico)
