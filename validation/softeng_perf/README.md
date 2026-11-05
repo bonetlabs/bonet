@@ -5,11 +5,21 @@ eBPF programs in `../baseline` and `../framework`.
 
 It covers:
 
+- cognitive complexity, with SonarSource's C analyzer (`cognitive.py`);
 - source metrics from Lizard and optional external line counters;
-- local C/eBPF cognitive complexity;
 - eBPF-specific source-pattern counts;
 - object-file metrics from `llvm-objdump`/`objdump`;
 - Linux verifier-log metrics.
+
+## What the paper uses
+
+| paper | how |
+|---|---|
+| Fig. 6, cognitive complexity | `python3 cognitive.py` (Sonar, below) |
+| Fig. 6, lines of code | `cloc --by-file` on the `.c` files (`../figures/README.md`) |
+| Table I, removed constructs | the `// [..]` tags in `../baseline/*.c`, see "Table I" below |
+
+The figures themselves are drawn by `../figures/plot.py`.
 
 ## Quick Start
 
@@ -21,7 +31,7 @@ source env/bin/activate
 python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.txt
 
-python3 cognitive.py
+python3 cognitive.py          # needs Docker, see below
 python3 generate_verifier_logs.py --baseline ../baseline --framework ../framework
 python3 compare_metrics.py \
   --baseline ../baseline \
@@ -36,31 +46,77 @@ python3 compare_metrics.py \
   --split-output-dir results/split
 ```
 
-Generated reports are written below `results/`.
+Generated reports are written below `results/` (ignored by git).
 
 ## Cognitive Complexity
 
-For the one-shot cognitive-complexity comparison:
-
 ```bash
-python3 cognitive.py
+python3 cognitive.py                  # about 5 minutes, the first time longer (images)
 ```
 
-The output is printed to the terminal and saved as:
+It prints a table and writes `results/cognitive/cognitive.{json,csv,md}`, one
+row per program pair: the cognitive complexity of the `baseline/` and the
+`framework/` file (the sum over the file's functions, Sonar's
+`cognitive_complexity` metric) and the change.
 
-- `results/cognitive/cognitive.json`
-- `results/cognitive/cognitive.csv`
-- `results/cognitive/cognitive.md`
+It needs only Docker, no account or license. What it does, and why:
 
-The default backend is local and reproducible. The optional official Sonar
-backend is available through:
+1. **SonarQube Developer Edition** (`sonarqube:developer`) in a disposable
+   container. The Community images have no C analyzer (they report "0 languages
+   detected" on `.c` files); the commercial editions do. Without a license the
+   server still starts and hands the analyzers to the scanner; it only refuses
+   to store the results ("Analyses suspended. Please set a valid license").
+2. **SonarScanner with clang** (`bonet-sonar-scanner`, built from
+   `sonar/Dockerfile` the first time). The C analyzer runs the compiler of
+   `compile_commands.json` to learn its predefined macros; the stock
+   `sonar-scanner-cli` image has none and skips every file.
+3. Each side is copied to a work directory under `results/`, with a
+   `compile_commands.json` for `clang -target bpf` (the BONet headers come from
+   `src/`), and scanned.
+4. **The measures are read from the scanner's own report**
+   (`.scannerwork/scanner-report`, kept with `sonar.scanner.keepReport=true`),
+   not from the server: the scanner computes them before uploading, so the
+   rejected upload does not matter. `read_report_metrics()` reads the two
+   protobuf files it needs (`component-N.pb`, `measures-N.pb`).
+
+`--keep-container` and `--keep-workdir` keep the server and the work directory
+for inspection. `SONAR_IMAGE` and `SONAR_SCANNER_IMAGE` (or `--sonar-image`,
+`--scanner-image`) change the images; a licensed server works the same way.
+
+`--engine local` runs, without Docker, the approximate analyzer of
+`compare_metrics.py`. It is close but not equal to Sonar (on the paper's
+workloads it gives 11/11/9 for BONet where Sonar gives 12/12/9, and 38 instead
+of 36 for the DNAT baseline of the first submission, whose numbers came from
+it). Use Sonar for anything published.
+
+Not working, do not retry: `sonarqube:community` (any version, no C), the
+sonar-cxx community plugin (a different analyzer), and SonarQube for IDE in VS
+Code (it only reports functions above the rule's threshold, 25 for C).
+
+## Table I
+
+Every line of the plain programs in `../baseline/` that exists only for the
+verifier or for low-level packet handling carries a tag in a trailing comment,
+e.g. `// [B P]`. Table I counts the tags of `xdp_mmlf.c`,
+`xdp_static_dnat.c` and `xdp_ip6ip6_encap.c` (a line with two tags counts in
+both rows):
+
+| tag | Table I row |
+|---|---|
+| `CC` | context casts (`ctx->data`, `ctx->data_end`) |
+| `B` | bounds checks |
+| `L` | loop termination checks |
+| `C` | header casts |
+| `P` | pointer-arithmetic expressions |
+| `E` | endian conversions |
+| `CS` | checksum-update operations |
+| `BW` | packet-layout writes |
 
 ```bash
-python3 cognitive.py --engine sonar
+grep -ho '//\s*\[[A-Z ]*\]' ../baseline/xdp_mmlf.c | tr -d '/[]' | tr ' ' '\n' | grep . | sort | uniq -c
 ```
 
-That mode requires a SonarQube/SonarCloud setup with C/C++/Objective-C CFamily
-analysis support. Methodological details are in `COGNITIVE.md`.
+A change to a baseline must keep its tags up to date.
 
 ## Verifier Logs
 

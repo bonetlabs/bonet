@@ -36,8 +36,6 @@ Notes:
 - Verifier: processed instructions are the verifier's count for the whole
   program. The stack is the sum of the frames it prints (`stack depth 88+0+8`),
   which for these programs is the deepest call chain.
-- Cognitive complexity: `cognitive.py` without `--engine sonar` uses its local
-  analyzer, which on the sources the paper measured (before commit b0ac6c5)
-  gives the paper's values. The Sonar engine needs a C analyzer, which
-  `sonarqube:community` does not have.
+- Cognitive complexity: `cognitive.py` measures it with SonarSource's C
+  analyzer in Docker (how and why: `../softeng_perf/README.md`).
 - `hatchcolor` needs matplotlib 3.10 or later (`macro_perf/.venv` has it).

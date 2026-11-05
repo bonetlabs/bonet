@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Run a reproducible cognitive-complexity comparison for validation eBPF programs.
+Cognitive complexity of the paired eBPF programs in ../baseline and ../framework.
 
-Default mode uses the local cognitive-complexity pass already used by
-compare_metrics.py, so python3 cognitive.py produces results without external
-services. Use --engine sonar to run a disposable local SonarQube container and
-SonarScanner container; that mode configures Sonar through the Web API, creates
-temporary projects, scans only the paired application .c files, fetches per-file
-cognitive_complexity measures, and writes the same reports.
+--engine sonar (default) measures it with SonarSource's own C analyzer: it starts a
+disposable SonarQube Developer Edition container, scans each side with a
+sonar-scanner-cli container that also has clang (sonar/Dockerfile), and reads the
+per-file cognitive_complexity from the report the scanner keeps locally. See
+README.md, "Cognitive complexity", for why it works this way.
+
+--engine local uses the approximate analyzer of compare_metrics.py, without Docker.
 """
 
 from __future__ import annotations
@@ -40,6 +41,11 @@ VALIDATION_DIR = SCRIPT_DIR.parent
 REPO_ROOT = VALIDATION_DIR.parent
 DEFAULT_RESULTS_DIR = SCRIPT_DIR / "results" / "cognitive"
 COGNITIVE_METRIC = "cognitive_complexity"
+# SonarQube Developer Edition: the cheapest edition with the C analyzer (CFamily); it runs without a
+# license, it only refuses to store the results, which we read from the scanner's report instead.
+DEFAULT_SONAR_IMAGE = "sonarqube:developer"
+# sonar-scanner-cli plus clang, which the C analyzer runs to learn the compiler's macros (sonar/Dockerfile).
+DEFAULT_SCANNER_IMAGE = "bonet-sonar-scanner"
 
 
 class CognitiveError(RuntimeError):
@@ -317,6 +323,14 @@ def docker_pull_if_missing(image: str, verbose: bool) -> None:
     run_command(["docker", "pull", image], timeout=1200)
 
 
+def docker_build_if_missing(image: str, context: Path, verbose: bool) -> None:
+    rc, _, _ = run_command_allow_failure(["docker", "image", "inspect", image], timeout=30)
+    if rc == 0:
+        return
+    info(f"Image {image} is not local; building it from {context}...", verbose)
+    run_command(["docker", "build", "-t", image, str(context)], timeout=1800)
+
+
 def docker_logs(container_name: str) -> str:
     rc, out, err = run_command_allow_failure(["docker", "logs", "--tail", "200", container_name], timeout=30)
     if rc != 0:
@@ -543,6 +557,9 @@ def run_sonar_scanner(
         f"SONAR_HOST_URL={runtime.host_url}",
         "-e",
         f"SONAR_TOKEN={runtime.token}",
+        # the image works in /tmp by default; keep .scannerwork where we can read it
+        "-e",
+        "SCANNER_WORKDIR_PATH=/usr/src/.scannerwork",
         "-v",
         f"{side_work}:/usr/src",
         "-v",
@@ -558,6 +575,7 @@ def run_sonar_scanner(
         "-Dsonar.sourceEncoding=UTF-8",
         "-Dsonar.scm.disabled=true",
         "-Dsonar.cfamily.compile-commands=compile_commands.json",
+        "-Dsonar.scanner.keepReport=true",
     ]
     info(f"Running SonarScanner for {side.label} ({len(expected_files)} files)", verbose)
     rc, out, err = run_command_allow_failure(cmd, timeout=timeout, secrets_to_redact=[runtime.token])
@@ -572,105 +590,79 @@ def run_sonar_scanner(
         fail(f"SonarScanner failed for {side.label} with exit code {rc}:\n{combined[-5000:]}")
     if "0 languages detected" in combined:
         fail(
-            f"SonarScanner completed for {side.label}, but Sonar detected 0 languages. "
-            "The SonarQube image probably cannot analyze C/C++/CFamily sources."
+            f"SonarScanner completed for {side.label}, but Sonar detected 0 languages: "
+            f"{runtime.sonar_image} has no C analyzer (the Community images do not; use sonarqube:developer)."
         )
-    wait_for_ce_task(runtime.host_url, runtime.token, side_work, side.label, raw)
     return raw
 
 
-def wait_for_ce_task(host_url: str, token: str, side_work: Path, label: str, raw: Dict[str, Any]) -> None:
-    report_task = side_work / ".scannerwork" / "report-task.txt"
-    if not report_task.exists():
-        fail(f"SonarScanner did not create {report_task} for {label}; cannot verify background analysis")
-    props: Dict[str, str] = {}
-    for line in report_task.read_text(encoding="utf-8", errors="replace").splitlines():
-        if "=" in line:
-            key, value = line.split("=", 1)
-            props[key.strip()] = value.strip()
-    ce_task_id = props.get("ceTaskId")
-    if not ce_task_id:
-        fail(f"SonarScanner report-task.txt for {label} has no ceTaskId")
-    raw["ce_task_id"] = ce_task_id
-
-    for _ in range(90):
-        payload = http_json("GET", host_url, "/api/ce/task", params={"id": ce_task_id}, token=token)
-        status = payload.get("task", {}).get("status")
-        raw["ce_status"] = status
-        raw["ce_payload"] = payload
-        if status == "SUCCESS":
-            return
-        if status in {"FAILED", "CANCELED"}:
-            fail(f"Sonar background task for {label} ended with {status}: {payload}")
-        time.sleep(2)
-    fail(f"Sonar background task for {label} did not finish within 180s")
-
-
-def fetch_project_metric(host_url: str, token: str, project_key: str) -> float:
-    payload = http_json(
-        "GET",
-        host_url,
-        "/api/measures/component",
-        params={"component": project_key, "metricKeys": COGNITIVE_METRIC},
-        token=token,
-    )
-    measures = payload.get("component", {}).get("measures", [])
-    for measure in measures:
-        if measure.get("metric") == COGNITIVE_METRIC:
-            return float(measure.get("value", 0))
-    fail(f"Sonar did not return aggregate {COGNITIVE_METRIC} for project {project_key}: {payload}")
-
-
-def fetch_file_metrics(host_url: str, token: str, project_key: str, expected_files: Sequence[str]) -> Dict[str, float]:
-    by_file: Dict[str, float] = {}
-    page = 1
+def _varint(data: bytes, i: int) -> Tuple[int, int]:
+    value = shift = 0
     while True:
-        payload = http_json(
-            "GET",
-            host_url,
-            "/api/measures/component_tree",
-            params={
-                "component": project_key,
-                "metricKeys": COGNITIVE_METRIC,
-                "qualifiers": "FIL",
-                "ps": "500",
-                "p": str(page),
-            },
-            token=token,
-        )
-        components = payload.get("components", [])
-        for component in components:
-            path = component.get("path") or component.get("name")
-            filename = Path(str(path)).name
-            measures = component.get("measures", [])
-            metric_value: Optional[float] = None
-            for measure in measures:
-                if measure.get("metric") == COGNITIVE_METRIC:
-                    metric_value = float(measure.get("value", 0))
-            if metric_value is not None:
-                if filename in by_file:
-                    fail(f"Sonar returned duplicate file component named {filename} in project {project_key}")
-                by_file[filename] = metric_value
+        byte = data[i]
+        i += 1
+        value |= (byte & 0x7F) << shift
+        shift += 7
+        if byte < 0x80:
+            return value, i
 
-        paging = payload.get("paging", {})
-        total = int(paging.get("total", len(components)))
-        page_size = int(paging.get("pageSize", len(components) or 1))
-        if page * page_size >= total:
-            break
-        page += 1
 
+def _proto_fields(data: bytes) -> Dict[int, Any]:
+    """Top-level fields of one protobuf message (last value wins); enough for the scanner report."""
+    fields: Dict[int, Any] = {}
+    i = 0
+    while i < len(data):
+        key, i = _varint(data, i)
+        number, wire = key >> 3, key & 7
+        if wire == 0:
+            value, i = _varint(data, i)
+        elif wire == 2:
+            size, i = _varint(data, i)
+            value, i = data[i:i + size], i + size
+        elif wire == 1:
+            value, i = data[i:i + 8], i + 8
+        elif wire == 5:
+            value, i = data[i:i + 4], i + 4
+        else:
+            fail(f"Unsupported protobuf wire type {wire} in the scanner report")
+        fields[number] = value
+    return fields
+
+
+def read_report_metrics(side_work: Path, label: str, expected_files: Sequence[str]) -> Dict[str, float]:
+    """cognitive_complexity per file from the report the scanner kept locally.
+
+    The server is only needed by the scanner to download the analyzers: without a license the
+    Developer Edition rejects the report ("Analyses suspended"), but the measures are computed by
+    the scanner and are already in .scannerwork/scanner-report (sonar.scanner.keepReport=true).
+    Files: component-<ref>.pb (one Component, whose path is a string field) and
+    measures-<ref>.pb (length-delimited Measure: metric_key = 1, int_value = 3 { value = 1 }).
+    """
+    report = side_work / ".scannerwork" / "scanner-report"
+    if not report.is_dir():
+        fail(f"SonarScanner kept no report for {label} in {report}")
     expected = set(expected_files)
-    found = set(by_file)
-    missing = sorted(expected - found)
-    extra_c = sorted(name for name in found - expected if name.endswith(".c"))
-    if missing or extra_c:
-        details: List[str] = []
-        if missing:
-            details.append("missing metrics for: " + ", ".join(missing))
-        if extra_c:
-            details.append("unexpected .c metrics for: " + ", ".join(extra_c))
-        fail(f"Sonar file metric set for {project_key} is ambiguous ({'; '.join(details)})")
-
+    by_file: Dict[str, float] = {}
+    for component in sorted(report.glob("component-*.pb")):
+        names = [
+            Path(v.decode("utf-8", errors="replace")).name
+            for v in _proto_fields(component.read_bytes()).values()
+            if isinstance(v, bytes)
+        ]
+        name = next((n for n in names if n in expected), None)
+        measures = report / ("measures-" + component.stem.split("-", 1)[1] + ".pb")
+        if name is None or not measures.exists():
+            continue
+        data, i = measures.read_bytes(), 0
+        while i < len(data):
+            size, i = _varint(data, i)
+            measure = _proto_fields(data[i:i + size])
+            i += size
+            if measure.get(1) == COGNITIVE_METRIC.encode() and 3 in measure:
+                by_file[name] = float(_proto_fields(measure[3]).get(1, 0))
+    missing = sorted(expected - set(by_file))
+    if missing:
+        fail(f"Scanner report for {label} has no {COGNITIVE_METRIC} for: " + ", ".join(missing))
     return {name: by_file[name] for name in sorted(expected)}
 
 
@@ -678,12 +670,17 @@ def run_sonar_engine(args: argparse.Namespace, baseline: SideSource, framework: 
     docker_available()
     check_port_free("127.0.0.1", args.port)
     docker_pull_if_missing(args.sonar_image, args.verbose)
-    docker_pull_if_missing(args.scanner_image, args.verbose)
+    if args.scanner_image == DEFAULT_SCANNER_IMAGE:
+        docker_build_if_missing(args.scanner_image, SCRIPT_DIR / "sonar", args.verbose)
+    else:
+        docker_pull_if_missing(args.scanner_image, args.verbose)
 
     run_id = args.run_id or dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + secrets.token_hex(4)
     container_name = f"bonet-cognitive-sonar-{run_id}"
     host_url = f"http://127.0.0.1:{args.port}"
-    work_root = Path(tempfile.mkdtemp(prefix=f"bonet-cognitive-{run_id}-"))
+    # Under the repo, not /tmp: the containers mount it, and a snap Docker cannot see /tmp.
+    ensure_dir(SCRIPT_DIR / "results")
+    work_root = Path(tempfile.mkdtemp(prefix=f"sonar-work-{run_id}-", dir=SCRIPT_DIR / "results"))
 
     runtime = SonarRuntime(
         run_id=run_id,
@@ -759,18 +756,10 @@ def run_sonar_engine(args: argparse.Namespace, baseline: SideSource, framework: 
             )
             runtime.raw[f"{side.label}_scanner"] = scanner_raw
 
-        side_scores: Dict[str, Dict[str, float]] = {}
-        side_aggregates: Dict[str, float] = {}
-        for side in [baseline, framework]:
-            key = runtime.project_keys[side.label]
-            side_scores[side.label] = fetch_file_metrics(host_url, token, key, expected_files)
-            side_aggregates[side.label] = fetch_project_metric(host_url, token, key)
-            summed = sum(side_scores[side.label].values())
-            if summed != side_aggregates[side.label]:
-                fail(
-                    f"Sonar aggregate mismatch for {side.label}: file sum is {summed}, "
-                    f"project {COGNITIVE_METRIC} is {side_aggregates[side.label]}"
-                )
+        side_scores = {
+            side.label: read_report_metrics(work_root / side.label, side.label, expected_files)
+            for side in [baseline, framework]
+        }
 
         raw = {
             "run_id": run_id,
@@ -964,13 +953,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Measure cognitive complexity for paired eBPF validation programs. "
-            "By default this uses the local reproducible analyzer; --engine sonar "
-            "starts and configures SonarQube/SonarScanner with Docker."
+            "By default this runs SonarSource's C analyzer in disposable Docker containers; "
+            "--engine local uses an approximate analyzer without Docker."
         )
     )
     parser.add_argument("--baseline", type=Path, default=VALIDATION_DIR / "baseline", help="Directory containing handwritten .c programs.")
     parser.add_argument("--framework", type=Path, default=VALIDATION_DIR / "framework", help="Directory containing framework-based .c programs.")
-    parser.add_argument("--engine", choices=["local", "sonar"], default="local", help="Measurement backend. Default: local.")
+    parser.add_argument("--engine", choices=["sonar", "local"], default="sonar", help="sonar (the paper's numbers, needs Docker) or local (a quick approximation). Default: sonar.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_RESULTS_DIR, help="Default directory for JSON/CSV/Markdown outputs.")
     parser.add_argument("--json", type=Path, help="JSON output path. Defaults to output-dir/cognitive.json.")
     parser.add_argument("--csv", type=Path, help="CSV output path. Defaults to output-dir/cognitive.csv.")
@@ -980,8 +969,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
     sonar = parser.add_argument_group("Sonar automation")
     sonar.add_argument("--port", type=int, default=9000, help="Host port for the disposable SonarQube container.")
-    sonar.add_argument("--sonar-image", default=os.environ.get("SONAR_IMAGE", "sonarqube:community"), help="SonarQube Docker image.")
-    sonar.add_argument("--scanner-image", default=os.environ.get("SONAR_SCANNER_IMAGE", "sonarsource/sonar-scanner-cli:latest"), help="SonarScanner Docker image.")
+    sonar.add_argument("--sonar-image", default=os.environ.get("SONAR_IMAGE", DEFAULT_SONAR_IMAGE), help="SonarQube Docker image; it needs the C analyzer.")
+    sonar.add_argument("--scanner-image", default=os.environ.get("SONAR_SCANNER_IMAGE", DEFAULT_SCANNER_IMAGE), help="SonarScanner Docker image with clang; built from sonar/Dockerfile when missing.")
     sonar.add_argument("--sonar-startup-timeout", type=int, default=360, help="Seconds to wait for SonarQube to become UP.")
     sonar.add_argument("--scanner-timeout", type=int, default=1200, help="Seconds to wait for each SonarScanner run.")
     sonar.add_argument(

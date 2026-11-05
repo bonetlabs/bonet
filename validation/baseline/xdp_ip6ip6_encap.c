@@ -87,14 +87,14 @@ int xdp_ip6ip6_encap(struct xdp_md *ctx)
         __u32 w1;
         __u16 w2;
 
-        if (data + sizeof(struct ipv6hdr) + ETH_HLEN > data_end)
+        if (data + sizeof(struct ipv6hdr) + ETH_HLEN > data_end) // [B P]
             return XDP_ABORTED;
-        w0 = *(__u64 *)(data + sizeof(struct ipv6hdr));
-        w1 = *(__u32 *)(data + sizeof(struct ipv6hdr) + 8);
-        w2 = *(__u16 *)(data + sizeof(struct ipv6hdr) + 12);
-        *(__u64 *)data = w0;
-        *(__u32 *)(data + 8) = w1;
-        *(__u16 *)(data + 12) = w2;
+        w0 = *(__u64 *)(data + sizeof(struct ipv6hdr));          // [P]
+        w1 = *(__u32 *)(data + sizeof(struct ipv6hdr) + 8);      // [P]
+        w2 = *(__u16 *)(data + sizeof(struct ipv6hdr) + 12);     // [P]
+        *(__u64 *)data = w0;                                     // [BW]
+        *(__u32 *)(data + 8) = w1;                               // [P BW]
+        *(__u16 *)(data + 12) = w2;                              // [P BW]
     } else {
 #pragma unroll
         for (i = 0; i < 22; i++) {                                   // [L]
