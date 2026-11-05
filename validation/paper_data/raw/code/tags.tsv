@@ -1,0 +1,4 @@
+workload	CC	B	L	C	P	E	CS	BW
+MMLF	2	5	1	3	3	15	2	0
+DNAT	2	4	1	4	3	17	4	0
+ENCAP	4	7	2	3	15	6	0	7

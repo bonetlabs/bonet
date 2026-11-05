@@ -1,0 +1,151 @@
+{
+  "run_id": "20261019-233115-paper",
+  "profile": "paper",
+  "seed": 773945732,
+  "net": {
+    "sut_rx_iface": "enp9s0",
+    "sut_rx_mac": "12:25:82:f3:87:07",
+    "sut_rx_ipv4": "10.8.0.2",
+    "sut_rx_prefix": 24,
+    "sut_rx_ipv6": "fd08::2",
+    "sut_rx_ipv6_prefix": 64,
+    "sut_tx_iface": "enp8s0",
+    "sut_tx_mac": "0e:d1:70:fe:1a:6b",
+    "sut_tx_ipv4": "10.7.0.2",
+    "sut_tx_prefix": 24,
+    "sut_tx_ipv6": "fd07::2",
+    "sut_tx_ipv6_prefix": 64,
+    "tg_tx_ipv4": "10.8.0.1",
+    "tg_tx_ipv6": "fd08::1",
+    "tg_rx_ipv4": "10.7.0.1",
+    "tg_rx_ipv6": "fd07::1",
+    "tg_tx_mac": "12:6c:50:70:b9:6d",
+    "tg_rx_mac": "12:8b:04:67:af:fa"
+  },
+  "trex": {
+    "tx_port": 0,
+    "rx_port": 1,
+    "api_path": "/opt/trex/v3.08/automation/trex_control_plane/interactive"
+  },
+  "sut": {
+    "ssh": "ubuntu@192.168.250.2",
+    "dir": "/home/ubuntu/bonet-bench/runs/20261019-233115-paper",
+    "rx_queue": 2,
+    "rx_cpu": 2
+  },
+  "method": "pdr",
+  "pdr": {
+    "repetitions": 10,
+    "frame_size": 78,
+    "start_pps": 50000,
+    "max_pps": 3000000,
+    "window_pps": 5000,
+    "delivery_ratio": 0.995,
+    "duration_s": 10,
+    "warmup_trials": 1,
+    "samples": 1,
+    "settle_s": 1
+  },
+  "runtime": null,
+  "check": {
+    "packets": 64,
+    "pps": 1000
+  },
+  "cases": {
+    "plain": {
+      "label": "Plain eBPF",
+      "src": "baseline",
+      "hook": "xdp"
+    },
+    "inline": {
+      "label": "BONet Inline",
+      "src": "framework",
+      "hook": "xdp",
+      "defines": [
+        "BNT_INLINE_ALL=1"
+      ]
+    },
+    "globals-c": {
+      "label": "BONet Global (C)",
+      "src": "framework",
+      "hook": "xdp",
+      "defines": [
+        "BNT_ASM_GLOBALS=0"
+      ]
+    },
+    "globals-asm": {
+      "label": "BONet Global (asm)",
+      "src": "framework",
+      "hook": "xdp"
+    },
+    "kernel": {
+      "label": "Kernel",
+      "hook": "kernel"
+    }
+  },
+  "baseline_case": "plain",
+  "experiments": [
+    {
+      "name": "MMLF",
+      "program": "mmlf",
+      "traffic": "ipv4",
+      "kernel": "mmlf",
+      "expect": "mmlf",
+      "cases": [
+        "plain",
+        "inline",
+        "globals-c",
+        "globals-asm",
+        "kernel"
+      ],
+      "objects": {
+        "plain": "objs/plain/xdp_mmlf.o",
+        "inline": "objs/inline/xdp_mmlf.o",
+        "globals-c": "objs/globals-c/xdp_mmlf.o",
+        "globals-asm": "objs/globals-asm/xdp_mmlf.o"
+      }
+    },
+    {
+      "name": "DNAT",
+      "program": "static_dnat",
+      "traffic": "ipv4",
+      "udp_checksum": true,
+      "kernel": "dnat",
+      "expect": "dnat",
+      "cases": [
+        "plain",
+        "inline",
+        "globals-c",
+        "globals-asm",
+        "kernel"
+      ],
+      "objects": {
+        "plain": "objs/plain/xdp_static_dnat.o",
+        "inline": "objs/inline/xdp_static_dnat.o",
+        "globals-c": "objs/globals-c/xdp_static_dnat.o",
+        "globals-asm": "objs/globals-asm/xdp_static_dnat.o"
+      }
+    },
+    {
+      "name": "ENCAP",
+      "program": "ip6ip6_encap",
+      "traffic": "ipv6",
+      "traffic_dst_ipv6": "fd04::100",
+      "kernel": "ip6ip6",
+      "expect": "ip6ip6",
+      "cases": [
+        "plain",
+        "inline",
+        "globals-c",
+        "globals-asm",
+        "kernel"
+      ],
+      "objects": {
+        "plain": "objs/plain/xdp_ip6ip6_encap.o",
+        "inline": "objs/inline/xdp_ip6ip6_encap.o",
+        "globals-c": "objs/globals-c/xdp_ip6ip6_encap.o",
+        "globals-asm": "objs/globals-asm/xdp_ip6ip6_encap.o"
+      }
+    }
+  ]
+}

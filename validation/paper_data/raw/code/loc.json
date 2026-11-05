@@ -1,0 +1,43 @@
+{"header" : {
+  "cloc_url"           : "github.com/AlDanial/cloc",
+  "cloc_version"       : "1.98",
+  "elapsed_seconds"    : 0.00809884071350098,
+  "n_files"            : 6,
+  "n_lines"            : 568,
+  "files_per_second"   : 740.846772056875,
+  "lines_per_second"   : 70133.4944213842},
+"baseline/xdp_static_dnat.c" :{
+  "blank": 24,
+  "comment": 2,
+  "code": 129,
+  "language": "C"},
+"baseline/xdp_ip6ip6_encap.c" :{
+  "blank": 26,
+  "comment": 2,
+  "code": 118,
+  "language": "C"},
+"baseline/xdp_mmlf.c" :{
+  "blank": 21,
+  "comment": 0,
+  "code": 97,
+  "language": "C"},
+"framework/xdp_ip6ip6_encap.c" :{
+  "blank": 10,
+  "comment": 0,
+  "code": 45,
+  "language": "C"},
+"framework/xdp_static_dnat.c" :{
+  "blank": 8,
+  "comment": 0,
+  "code": 41,
+  "language": "C"},
+"framework/xdp_mmlf.c" :{
+  "blank": 8,
+  "comment": 0,
+  "code": 37,
+  "language": "C"},
+"SUM": {
+  "blank": 97,
+  "comment": 4,
+  "code": 467,
+  "nFiles": 6} }

@@ -1,0 +1,207 @@
+{
+  "run_id": "20261104-161238-runtime",
+  "created": "2026-11-04T16:12:40+0100",
+  "profile": {
+    "build": {
+      "clang": "clang-18",
+      "cflags": [
+        "-O2",
+        "-g",
+        "-Wall",
+        "-Wextra",
+        "-Werror=incompatible-pointer-types",
+        "-target",
+        "bpf",
+        "-mcpu=v3",
+        "-D__TARGET_ARCH_x86"
+      ]
+    },
+    "cases": {
+      "plain": {
+        "label": "Plain eBPF",
+        "src": "baseline",
+        "hook": "xdp"
+      },
+      "inline": {
+        "label": "BONet Inline",
+        "src": "framework",
+        "hook": "xdp",
+        "defines": [
+          "BNT_INLINE_ALL=1"
+        ]
+      },
+      "globals-c": {
+        "label": "BONet Global (C)",
+        "src": "framework",
+        "hook": "xdp",
+        "defines": [
+          "BNT_ASM_GLOBALS=0"
+        ]
+      },
+      "globals-asm": {
+        "label": "BONet Global (asm)",
+        "src": "framework",
+        "hook": "xdp"
+      }
+    },
+    "baseline_case": "plain",
+    "pdr": {
+      "repetitions": 10,
+      "frame_size": 78,
+      "start_pps": 50000,
+      "max_pps": 3000000,
+      "window_pps": 5000,
+      "delivery_ratio": 0.995,
+      "duration_s": 10,
+      "warmup_trials": 1,
+      "samples": 1,
+      "settle_s": 1
+    },
+    "check": {
+      "packets": 64,
+      "pps": 1000
+    },
+    "experiments": [
+      {
+        "name": "MMLF",
+        "program": "mmlf",
+        "traffic": "ipv4",
+        "kernel": "mmlf",
+        "expect": "mmlf"
+      },
+      {
+        "name": "DNAT",
+        "program": "static_dnat",
+        "traffic": "ipv4",
+        "udp_checksum": true,
+        "kernel": "dnat",
+        "expect": "dnat"
+      },
+      {
+        "name": "ENCAP",
+        "program": "ip6ip6_encap",
+        "traffic": "ipv6",
+        "traffic_dst_ipv6": "fd04::100",
+        "kernel": "ip6ip6",
+        "expect": "ip6ip6"
+      }
+    ],
+    "name": "runtime",
+    "method": "runtime",
+    "runtime": {
+      "repetitions": 10,
+      "rates_pps": [
+        500000
+      ],
+      "duration_s": 10,
+      "warmup_s": 2
+    }
+  },
+  "testbed": {
+    "trex": {
+      "ssh": "sut",
+      "home": "/home/prognose/bonet-bench",
+      "trex_dir": "/opt/trex/v3.08",
+      "trex_version": "v3.08",
+      "hugepages_2m": 2048,
+      "ports": [
+        {
+          "pci": "99:00.1",
+          "iface": "enp153s0f1np1",
+          "mac": "a0:88:c2:c3:76:2f"
+        }
+      ],
+      "tx_port": 0,
+      "rx_port": 0,
+      "socket": 1,
+      "master_thread": 24,
+      "latency_thread": 25,
+      "threads": [
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47
+      ],
+      "port_bandwidth_gb": 100,
+      "port_mtu": 1500
+    },
+    "sut": {
+      "ssh": "trex",
+      "control": {
+        "sut_ip": "192.168.17.82"
+      },
+      "user": "prognose",
+      "home": "/home/prognose/bonet-bench",
+      "rx_queue": 26,
+      "rx_cpu": 26,
+      "fixed_cpu_freq": true
+    },
+    "network": {
+      "sut_rx_iface": "enp171s0np0",
+      "sut_rx_mac": "40:a6:b7:c7:d4:10",
+      "sut_rx_ipv4": "10.8.0.2",
+      "sut_rx_prefix": 24,
+      "sut_rx_ipv6": "fd08::2",
+      "sut_rx_ipv6_prefix": 64,
+      "sut_tx_iface": "enp171s0np0",
+      "sut_tx_mac": "40:a6:b7:c7:d4:10",
+      "sut_tx_ipv4": "10.7.0.2",
+      "sut_tx_prefix": 24,
+      "sut_tx_ipv6": "fd07::2",
+      "sut_tx_ipv6_prefix": 64,
+      "tg_tx_ipv4": "10.8.0.1",
+      "tg_tx_ipv6": "fd08::1",
+      "tg_rx_ipv4": "10.7.0.1",
+      "tg_rx_ipv6": "fd07::1"
+    },
+    "pdr": {
+      "max_pps": 12000000
+    },
+    "runtime": {
+      "rates_pps": [
+        2000000
+      ]
+    }
+  },
+  "git_commit": "1cb59a61f133ffc39eae888ba25b39bdd815d7b0",
+  "git_describe": "1cb59a6-dirty",
+  "git_dirty": true,
+  "git_diff_sha256": "006a2a6fed13d1eff9d0bb892eb9309bfa096fb51abd535442f9238b3c19b25d",
+  "compiler": "Ubuntu clang version 18.1.8 (20ubuntu8)",
+  "objects_sha256": {
+    "objs/globals-asm/xdp_ip6ip6_encap.o": "467f9951d4178cd8a4a5c0ac446c226047e6fdb1f9d1ab262aa9c493e5e524c0",
+    "objs/globals-asm/xdp_mmlf.o": "68498a3f53eea4aa98596ac26ae4a2ddf122db1fd87c285bf90f1d433b234615",
+    "objs/globals-asm/xdp_static_dnat.o": "d8db6518de8bae9b4a85ab2d43ad7b9c9bb6931c6a95e035817f0a8e13702c04",
+    "objs/globals-c/xdp_ip6ip6_encap.o": "d4aae52f9149b5183012db9617549ef8f4cc364d280040e78c250a57ada2d84a",
+    "objs/globals-c/xdp_mmlf.o": "d0855dda7632b2c074cb0637e4afeb02da20c90b6e053cf4dc47be8071b263d0",
+    "objs/globals-c/xdp_static_dnat.o": "a1141fff072ee41d1c5f5d21ae495070006d896c368b87d75db582e03e53b4a6",
+    "objs/inline/xdp_ip6ip6_encap.o": "59cec7b9a5b2b94f5944ef3526639b695be128d1d656dec88c02fad035f90544",
+    "objs/inline/xdp_mmlf.o": "853b9334553a07739b7e47dc10c8508b9e4645e89fe6a79b83d7755e5baf4766",
+    "objs/inline/xdp_static_dnat.o": "4884415a072362b65dc630d87d76d838c3d07ce6b666f8f45fba8e64a3154ba4",
+    "objs/plain/xdp_ip6ip6_encap.o": "524b23a6b3115cf9e6e1f7fa371a13e551ca12d7bffa1f7bf3769b5b9bf3089f",
+    "objs/plain/xdp_mmlf.o": "0a0a03e989fa279a4b70c8b3b0500381d061b2fd4336b4259116b36e718320e9",
+    "objs/plain/xdp_static_dnat.o": "932178a4ce0ae4b7acbebe72b5ae00655513ebf8c898d1b488866dd9d2133ded"
+  },
+  "trex_host": [
+    "6.8.0-147-generic"
+  ],
+  "note": "run time per packet, bare metal, 2 Mpps, IOMMU passthrough"
+}

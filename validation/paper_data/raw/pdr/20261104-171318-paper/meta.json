@@ -1,0 +1,202 @@
+{
+  "run_id": "20261104-171318-paper",
+  "created": "2026-11-04T17:13:21+0100",
+  "profile": {
+    "build": {
+      "clang": "clang-18",
+      "cflags": [
+        "-O2",
+        "-g",
+        "-Wall",
+        "-Wextra",
+        "-Werror=incompatible-pointer-types",
+        "-target",
+        "bpf",
+        "-mcpu=v3",
+        "-D__TARGET_ARCH_x86"
+      ]
+    },
+    "cases": {
+      "plain": {
+        "label": "Plain eBPF",
+        "src": "baseline",
+        "hook": "xdp"
+      },
+      "inline": {
+        "label": "BONet Inline",
+        "src": "framework",
+        "hook": "xdp",
+        "defines": [
+          "BNT_INLINE_ALL=1"
+        ]
+      },
+      "globals-c": {
+        "label": "BONet Global (C)",
+        "src": "framework",
+        "hook": "xdp",
+        "defines": [
+          "BNT_ASM_GLOBALS=0"
+        ]
+      },
+      "globals-asm": {
+        "label": "BONet Global (asm)",
+        "src": "framework",
+        "hook": "xdp"
+      },
+      "kernel": {
+        "label": "Kernel",
+        "hook": "kernel"
+      }
+    },
+    "baseline_case": "plain",
+    "pdr": {
+      "repetitions": 10,
+      "frame_size": 78,
+      "start_pps": 50000,
+      "max_pps": 3000000,
+      "window_pps": 5000,
+      "delivery_ratio": 0.995,
+      "duration_s": 10,
+      "warmup_trials": 1,
+      "samples": 1,
+      "settle_s": 1
+    },
+    "check": {
+      "packets": 64,
+      "pps": 1000
+    },
+    "experiments": [
+      {
+        "name": "MMLF",
+        "program": "mmlf",
+        "traffic": "ipv4",
+        "kernel": "mmlf",
+        "expect": "mmlf"
+      },
+      {
+        "name": "DNAT",
+        "program": "static_dnat",
+        "traffic": "ipv4",
+        "udp_checksum": true,
+        "kernel": "dnat",
+        "expect": "dnat"
+      },
+      {
+        "name": "ENCAP",
+        "program": "ip6ip6_encap",
+        "traffic": "ipv6",
+        "traffic_dst_ipv6": "fd04::100",
+        "kernel": "ip6ip6",
+        "expect": "ip6ip6"
+      }
+    ],
+    "name": "paper"
+  },
+  "testbed": {
+    "trex": {
+      "ssh": "sut",
+      "home": "/home/prognose/bonet-bench",
+      "trex_dir": "/opt/trex/v3.08",
+      "trex_version": "v3.08",
+      "hugepages_2m": 2048,
+      "ports": [
+        {
+          "pci": "99:00.1",
+          "iface": "enp153s0f1np1",
+          "mac": "a0:88:c2:c3:76:2f"
+        }
+      ],
+      "tx_port": 0,
+      "rx_port": 0,
+      "socket": 1,
+      "master_thread": 24,
+      "latency_thread": 25,
+      "threads": [
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47
+      ],
+      "port_bandwidth_gb": 100,
+      "port_mtu": 1500
+    },
+    "sut": {
+      "ssh": "trex",
+      "control": {
+        "sut_ip": "192.168.17.82"
+      },
+      "user": "prognose",
+      "home": "/home/prognose/bonet-bench",
+      "rx_queue": 26,
+      "rx_cpu": 26,
+      "fixed_cpu_freq": true
+    },
+    "network": {
+      "sut_rx_iface": "enp171s0np0",
+      "sut_rx_mac": "40:a6:b7:c7:d4:10",
+      "sut_rx_ipv4": "10.8.0.2",
+      "sut_rx_prefix": 24,
+      "sut_rx_ipv6": "fd08::2",
+      "sut_rx_ipv6_prefix": 64,
+      "sut_tx_iface": "enp171s0np0",
+      "sut_tx_mac": "40:a6:b7:c7:d4:10",
+      "sut_tx_ipv4": "10.7.0.2",
+      "sut_tx_prefix": 24,
+      "sut_tx_ipv6": "fd07::2",
+      "sut_tx_ipv6_prefix": 64,
+      "tg_tx_ipv4": "10.8.0.1",
+      "tg_tx_ipv6": "fd08::1",
+      "tg_rx_ipv4": "10.7.0.1",
+      "tg_rx_ipv6": "fd07::1"
+    },
+    "pdr": {
+      "max_pps": 12000000
+    },
+    "runtime": {
+      "rates_pps": [
+        2000000
+      ]
+    }
+  },
+  "git_commit": "1cb59a61f133ffc39eae888ba25b39bdd815d7b0",
+  "git_describe": "1cb59a6-dirty",
+  "git_dirty": true,
+  "git_diff_sha256": "006a2a6fed13d1eff9d0bb892eb9309bfa096fb51abd535442f9238b3c19b25d",
+  "compiler": "Ubuntu clang version 18.1.8 (20ubuntu8)",
+  "objects_sha256": {
+    "objs/globals-asm/xdp_ip6ip6_encap.o": "d8df4b4b982ab105a07fc51e53715761f32c5f2b3642e3ad861d0ee2918530ac",
+    "objs/globals-asm/xdp_mmlf.o": "3b78762b06fca06f983b7e18cae05143133663ec4706e1e827e69020ea78cdc0",
+    "objs/globals-asm/xdp_static_dnat.o": "0a7b907464a68b5432215f026aa47f34a23a3a05a9dd2269f247db65eca9ce57",
+    "objs/globals-c/xdp_ip6ip6_encap.o": "ad6e2e6112b8e239ce1433fd201ea92005b1190248b40560b6be8c1d979cb552",
+    "objs/globals-c/xdp_mmlf.o": "48b20d88ae8cb36c90d016f7175b5246ee858cc58c8bd278cbbb4ef4a38cd6e5",
+    "objs/globals-c/xdp_static_dnat.o": "1364dc1f9e4c5154632ab91941c221fd96f06b187fb152b56b2e4b7fff6d4395",
+    "objs/inline/xdp_ip6ip6_encap.o": "5fd5a042ba0d894ef77055a9f59c87be2e21068565603593ddea7b55c96f7694",
+    "objs/inline/xdp_mmlf.o": "7d41fa1d66a8d0a8b6bfa5aed177b21e0a254c951d8fd7b59b9cca8b1de29fac",
+    "objs/inline/xdp_static_dnat.o": "169dabc5ad179f30722d0c8e3bb840c1854ead1ffa166465c93aed5be0f7e278",
+    "objs/plain/xdp_ip6ip6_encap.o": "a745ff79ab73bfcf10484d0ae7b7c0685ee295895524abf2009fd6a3a65a09bb",
+    "objs/plain/xdp_mmlf.o": "33d1c517db9ac7cdd2fa2dea5c1f522839bdbdcee784d406e9c12ab6c1a75136",
+    "objs/plain/xdp_static_dnat.o": "4c6128557a9ec32e491a87797e0e5fbf0ca21b31371f65afeab01b9ffd327ea8"
+  },
+  "trex_host": [
+    "6.8.0-147-generic"
+  ],
+  "note": "paper PDR, bare metal (TRex .81 BF-2, SUT .82 E810), IOMMU passthrough, max 12 Mpps"
+}

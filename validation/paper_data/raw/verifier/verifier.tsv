@@ -1,0 +1,13 @@
+case	object	processed_insns	total_states	peak_states	stack_depth	stack_bytes
+globals-asm	xdp_ip6ip6_encap	1118	49	48	88+0+8+0+0	96
+globals-asm	xdp_mmlf	398	27	27	88+0+0+0+0+0+0	88
+globals-asm	xdp_static_dnat	674	39	39	88+0+0+0+0+0+0	88
+globals-c	xdp_ip6ip6_encap	997	43	43	88+0+16+0+0	104
+globals-c	xdp_mmlf	398	27	27	88+0+0+0+0+0+0	88
+globals-c	xdp_static_dnat	719	37	37	88+0+0+8+0+0+0	96
+inline	xdp_ip6ip6_encap	1113	61	59	72	72
+inline	xdp_mmlf	585	23	23	72	72
+inline	xdp_static_dnat	1110	49	48	72	72
+plain	xdp_ip6ip6_encap	837	25	25	64	64
+plain	xdp_mmlf	527	18	17	64	64
+plain	xdp_static_dnat	1031	44	38	64	64

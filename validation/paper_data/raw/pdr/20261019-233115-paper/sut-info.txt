@@ -1,0 +1,9 @@
+kernel: 6.8.0-124-generic
+os: Ubuntu 24.04.4 LTS
+cpu: AMD EPYC 7532 32-Core Processor
+RHEL-8.6.0 PC (Q35 + ICH9, 2009)  CPU @ 2.0GHz
+cpus: 16
+rx_driver: driver: mlx5_core version: 6.8.0-124-generic firmware-version: 20.43.3608 (MT_0000000224) expansion-rom-version:  bus-info: 0000:09:00.0 supports-statistics: yes supports-test: yes supports-eeprom-access: no supports-register-dump: no supports-priv-flags: yes 
+rx_channels: 5
+irqbalance: inactive
+bpftool: bpftool v7.4.0

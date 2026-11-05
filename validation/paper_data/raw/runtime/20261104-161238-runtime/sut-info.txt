@@ -1,0 +1,11 @@
+kernel: 6.8.0-147-generic
+os: Ubuntu 24.04.4 LTS
+cpu: Intel(R) Xeon(R) Gold 6442Y
+Intel(R) Xeon(R) Gold 6442Y  CPU @ 2.6GHz
+cpus: 96
+rx_driver: driver: ice version: 6.8.0-147-generic firmware-version: 3.20 0x8000d846 1.3146.0 expansion-rom-version:  bus-info: 0000:ab:00.0 supports-statistics: yes supports-test: yes supports-eeprom-access: yes supports-register-dump: yes supports-priv-flags: yes 
+rx_channels: 96
+irqbalance: inactive
+governor: performance
+no_turbo: 1
+bpftool: bpftool v7.4.0
