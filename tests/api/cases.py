@@ -257,6 +257,24 @@ def corpus():
                       ([(0x8100, 1), (0x8100, 2), (0x8100, 3)], 'aaa')):
         c[f'tags_{tag}'] = P(dict(eth=0, ipv4=14 + 4 * len(tags), udp=34 + 4 * len(tags)) if len(tags) < 3 else
                              dict(eth=0), eth(0x0800, tags) + ip4(17, udp(ph4)))
+    # ARP headers valid but for one field: the protocol type's low byte, the protocol address length
+    c['arp_ptype'] = P(dict(eth=0, arp=14), eth(0x0806) + struct.pack('!HHBBH6s4s6s4s', 1, 0x0801, 6, 4, 1, MAC_S, A4,
+                                                                       bytes(6), B4) + bytes(18))
+    c['arp_plen'] = P(dict(eth=0, arp=14), eth(0x0806) + struct.pack('!HHBBH', 1, 0x0800, 6, 16, 1) + MAC_S +
+                      bytes(16) + bytes(6) + bytes(16))
+    # a UDP checksum that rewriting the port to 0x8000 (the default argument) turns into 0
+    for f, at in (('sport', 0), ('dport', 2)):
+        d, u = bytearray(c['v4udp']['data']), c['v4udp']['off']['udp']
+        old = int.from_bytes(d[u + at:u + at + 2], 'big')
+        ck = next(k for k in range(1, 0x10000)
+                  if ((lambda s: (s & 0xffff) + (s >> 16))((lambda s: (s & 0xffff) + (s >> 16))(
+                      (~k & 0xffff) + (~old & 0xffff) + 0x8000))) == 0xffff)
+        d[u + 6:u + 8] = ck.to_bytes(2, 'big')
+        c[f'v4udp_{f}_to_csum0'] = P(dict(c['v4udp']['off']), bytes(d))
+    # a payload length an SRH would push past 0xffff
+    d = bytearray(c['v6udp']['data'])
+    d[18:20] = (0xfff8).to_bytes(2, 'big')
+    c['v6udp_bigplen'] = P(dict(c['v6udp']['off']), bytes(d))
     # every L3 variant behind one and two VLAN tags too: the walks are unrolled
     # per VLAN depth, so each depth has its own copy of the L3 code
     for name, e in list(c.items()):
@@ -291,7 +309,7 @@ for _f in ('neighbor_advert_router', 'neighbor_advert_solicited', 'neighbor_adve
 EXTRA_CUTS = {'ctx': ('v2_v6ext6', 'v2_v6frag_first', 'v1_v4tcp_opts', 'v2_v6ah', 'v1_v6echo', 'v2_arp' if False else
                       'vlan1_arp', 'v1_mpls1_v4'),
               'ipv6': ('v6ext6', 'v6ah', 'v6frag_first', 'v6srh'), 'eth': ('vlan1_v4tcp', 'v4ipip', 'v6in6'),
-              'ipv4': ('v4ipip',), 'arp': ('arp_long',)}
+              'ipv4': ('v4ipip',), 'arp': ('arp_long',), 'mpls': ('mpls1_v4',)}
 
 SENTINEL = 0x5a5a  # initial offset of an output view: still there means untouched
 FILL = 0xa5        # initial content of the pointer arguments, to see what gets cleared
@@ -425,6 +443,9 @@ def cases(name, sig):
                 a = args_default()
                 a[k] = v
                 out.append((f'arg{k}:{v:#x}', main['data'], io_pack(a, mo, 0, buf)))
+    if name.endswith(('dec_ttl', 'dec_hop_limit')):  # no expired flag, on a packet that has expired
+        e = CORPUS['v4_ttl1' if 'ipv4' in name else 'v6_hop1']
+        out.append(('null:1:expired', e['data'], io_pack(args_default(), offsets(dict(e, name='')), 1 << 1, buf)))
     if in_view is not None:  # views come from parse, which stops at 0xffff (see parseoff)
         for o in (len(main['data']), 0xfffe, 0xffff):
             offs = list(mo)
