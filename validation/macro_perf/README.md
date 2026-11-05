@@ -14,7 +14,9 @@ stops the run.
 ## Layout
 
 ```text
-testbed.yaml       machines, links, MACs, pinned queue/CPU (the only per-testbed file)
+testbeds/          one file per testbed: machines, links, MACs, pinned queue/CPU
+  fabric.yaml      two FABRIC VMs, three ConnectX-6 VF links (the paper's runs)
+  bare-metal.yaml  two Prognose servers, one 100G cable each into a switch
 profiles/          what to measure: build flags, cases, workloads, PDR method
   paper.yaml       Fig. 4: MMLF, DNAT, ENCAP x plain, inline, globals C, globals asm, kernel
   debug.yaml       paper.yaml with one short search each (~15 min)
@@ -51,47 +53,87 @@ of each case with its 95% interval and its difference from the plain program.
 
 ## Testbed
 
-Two machines reachable from here by ssh, named `TREX` and `SUT` in
-`~/.ssh/config` (other names: set `trex.ssh` and `sut.ssh` in `testbed.yaml`),
-with passwordless sudo and at least two cables between them. `./remote.py
-setup` finds the rest and writes it to `testbed.yaml`:
+Every command that touches the machines takes `-t <name>`, the file
+`testbeds/<name>.yaml` (default: `$BENCH_TESTBED`, else `fabric`). A run
+records its testbed in `plan.json`, so `status`, `fetch`, `resume` and `stop`
+find the machines by themselves; the reports keep each testbed apart.
+
+A testbed is two machines reachable from here by ssh (`trex.ssh` and
+`sut.ssh`, default `TREX` and `SUT` in `~/.ssh/config`) with passwordless sudo
+and at least one cable between them. Starting from a file with just the two
+ssh names, `./remote.py -t <name> setup` finds the rest and writes it there:
 
 - the links, from which SUT MAC answers an all-nodes ping on each TREX port;
   ordered by TREX PCI address, the first carries the traffic to the SUT, the
-  second the forwarded traffic back;
-- PCI addresses, MACs, users, home directories, CPUs (TRex worker threads:
-  2..n-1), channels (the pinned RX queue: 2, or the last one);
+  second the forwarded traffic back. With a single cable it carries both: the
+  SUT redirects out of the port it received on (the same XDP_REDIRECT path,
+  not XDP_TX), and TRex sends and receives on one port (the other is `dummy`);
+- PCI addresses, MACs, users, home directories; the NUMA node of the NICs,
+  whose first cores take TRex (master, latency, then the workers) and the
+  SUT's pinned RX queue and CPU (first core + 2, same number for both:
+  XDP_REDIRECT transmits on the queue of the current CPU);
 - the control path: the runner on TREX drives the SUT over ssh, to the SUT's
   management address if TREX can reach it, otherwise over a third link with
   192.168.250.1/.2 (on FABRIC the VMs cannot reach each other's management
   addresses).
 
-Values already in `testbed.yaml` are kept: edit to override, delete a key (or
-the file) to have it found again. `./remote.py topology` shows what setup would
-find without changing anything.
+Once the file has ports, setup uses it as it is (DPDK may hold the ports by
+then): `setup --rediscover` looks at the machines again, keeping the values
+still in the file. `./remote.py -t <name> topology` shows what setup would find
+without changing anything.
+
+`sut.fixed_cpu_freq: true` (bare metal) sets the performance governor and
+turns turbo off before every measurement, so the RX CPU keeps one frequency.
+The kernel's ICMP redirects are off, as with one port every forwarded packet
+would trigger one.
+
+The SUT's NIC must not go through IOMMU translation: `run` and `resume` stop
+if it does, and setup does not change it. With the IOMMU translating (Ubuntu's default, `iommu: Default domain
+type: Translated` in dmesg), every redirected packet is mapped for DMA through
+it: on the bare-metal SUT (kernel 6.8, E810) that took more than half of the
+RX CPU and capped every XDP case at the same ~1.3 Mpps, against ~6 Mpps in
+passthrough. FABRIC VMs have no virtual IOMMU. Check and set it by hand, once
+per boot (the port goes down for a few seconds):
+
+```bash
+g=/sys/bus/pci/devices/0000:<pci>/iommu_group; cat $g/type   # want: identity
+echo 0000:<pci> | sudo tee /sys/bus/pci/drivers/ice/unbind   # every device of the group
+echo identity | sudo tee $g/type
+echo 0000:<pci> | sudo tee /sys/bus/pci/drivers/ice/bind
+```
+
+or permanently with `iommu=pt` on the kernel command line. A testbed much
+faster or slower than the profiles overrides their values with `pdr:` and
+`runtime:` sections in its file (bare metal: `max_pps`, `rates_pps`).
+
+Intel ports (E810) need vfio-pci and the ice DDP package uncompressed; setup
+installs both, and `trex start` binds the ports to vfio-pci itself (TRex only
+picks it with `iommu=` on the kernel command line).
 
 On the SUT all traffic is steered to one RX queue (`sut.rx_queue`), and its
 interrupt, with that of the TX queue XDP_REDIRECT uses, is pinned to
 `sut.rx_cpu`; irqbalance is stopped. The check verifies that the RX interrupts
 land on that CPU.
 
-TRex is downloaded from trex-tgn.cisco.com with a plain `curl`; if that fails
-(the server has had certificate problems), setup says so and TRex has to be put
-in `trex.trex_dir` by hand.
+TRex is downloaded from trex-tgn.cisco.com with `curl`. The server leaves its
+intermediate CA out of the TLS chain; when the download fails, setup fetches
+that certificate from the address in the server's own and retries (still
+verified against the system roots). If that fails too, setup says so and TRex
+has to be put in `trex.trex_dir` by hand.
 
 ## Use
 
 One-time setup of a new slice (idempotent):
 
 ```bash
-./remote.py setup         # testbed.yaml, packages, TRex, /etc/trex_cfg.yaml, hugepages, ssh key
-./remote.py trex start    # TRex server in tmux on TREX
+./remote.py -t bare-metal setup        # testbed file, packages, TRex, /etc/trex_cfg.yaml, hugepages, ssh key
+./remote.py -t bare-metal trex start   # TRex server in tmux on TREX
 ```
 
 A run:
 
 ```bash
-./remote.py run -p paper --note "asm globals vs C globals"
+./remote.py -t bare-metal run -p paper --note "asm globals vs C globals"
 ./remote.py status              # progress, ETA, last log lines
 ./remote.py fetch --wait        # download every 15 min until done, rebuilding the reports
 ```
@@ -100,8 +142,9 @@ A run:
 searches are kept), `./remote.py stop` interrupts it, `./remote.py report`
 rebuilds the reports from what was downloaded. A paper run takes about 11 h.
 
-The report needs matplotlib: `python3 -m venv .venv && .venv/bin/pip install
-matplotlib pyyaml` (remote.py uses `.venv` when present).
+remote.py needs pyyaml and the report matplotlib: `python3 -m venv .venv &&
+.venv/bin/pip install matplotlib pyyaml`, then run `.venv/bin/python remote.py
+...` (remote.py runs the report with `.venv` when present).
 
 ## Cases
 
@@ -119,7 +162,7 @@ objects and their hashes are kept with the run.
 
 ## Checks
 
-Before every search, 64 packets are sent at 1 kpps and captured on TRex port 1:
+Before every search, 64 packets are sent at 1 kpps and captured on the TRex receive port (port 1, or port 0 with one cable):
 
 - each must equal the workload's model in `bench/packets.py` (MMLF: TOS 0x2e,
   TTL-1; DNAT: daddr 10.7.0.1, IP and UDP checksums, TTL-1; ENCAP: outer IPv6

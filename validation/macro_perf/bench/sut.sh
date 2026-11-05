@@ -23,9 +23,9 @@ TX="${SUT_TX_IFACE:-}"
 
 pci_of() { basename "$(readlink -f "/sys/class/net/$1/device")"; }
 
-# IRQ of completion queue $2 of interface $1.
+# IRQ of queue $2 of interface $1 (mlx5 or ice).
 queue_irq() {
-    grep -E "mlx5_comp$2@pci:$(pci_of "$1")\$" /proc/interrupts | cut -d: -f1 | tr -d ' '
+    grep -E "(mlx5_comp$2@pci:$(pci_of "$1")|ice-$1-TxRx-$2)\$" /proc/interrupts | cut -d: -f1 | tr -d ' '
 }
 
 detach_all() {
@@ -71,7 +71,7 @@ pin_queue() {
     ethtool -X "${RX}" weight ${weights}
     for dev in "${RX}" "${TX}"; do
         irq=$(queue_irq "${dev}" "${RX_QUEUE}")
-        [[ -n "${irq}" ]] || die "no mlx5_comp${RX_QUEUE} interrupt for ${dev}"
+        [[ -n "${irq}" ]] || die "no interrupt for queue ${RX_QUEUE} of ${dev}"
         echo "${RX_CPU}" >"/proc/irq/${irq}/smp_affinity_list"
     done
 }
@@ -94,6 +94,11 @@ configure() {
     sysctl -qw "net.ipv4.conf.${RX}.rp_filter=0"
     sysctl -qw "net.ipv4.conf.${TX}.rp_filter=0"
     sysctl -qw net.ipv6.conf.all.forwarding=1
+    # With one port (RX = TX) the kernel would answer every forwarded packet
+    # with an ICMP redirect; the flag is OR-ed between all and the interface.
+    sysctl -qw net.ipv4.conf.all.send_redirects=0
+    sysctl -qw "net.ipv4.conf.${RX}.send_redirects=0"
+    sysctl -qw "net.ipv4.conf.${TX}.send_redirects=0"
 
     ip neigh replace "${TG_RX_IPV4}" lladdr "${TG_RX_MAC}" dev "${TX}" nud permanent
     ip -6 neigh replace "${TG_RX_IPV6}" lladdr "${TG_RX_MAC}" dev "${TX}" nud permanent
@@ -102,6 +107,22 @@ configure() {
 
     disable_offloads "${RX}"
     disable_offloads "${TX}"
+    [[ "${FIXED_CPU_FREQ:-0}" == 1 ]] && fix_cpu_freq
+    true
+}
+
+# Bare metal: no turbo and the performance governor, so that the RX CPU runs
+# at one frequency through the whole run (VMs have no cpufreq to set).
+fix_cpu_freq() {
+    local f
+    for f in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do
+        echo performance >"${f}"
+    done
+    if [[ -e /sys/devices/system/cpu/intel_pstate/no_turbo ]]; then
+        echo 1 >/sys/devices/system/cpu/intel_pstate/no_turbo
+    elif [[ -e /sys/devices/system/cpu/cpufreq/boost ]]; then
+        echo 0 >/sys/devices/system/cpu/cpufreq/boost
+    fi
 }
 
 kernel_setup() {
@@ -148,7 +169,7 @@ prepare() {
             kernel_setup ;;
         *) die "unknown hook: ${HOOK}" ;;
     esac
-    # After the attach: mlx5 reopens its channels when an XDP program appears.
+    # After the attach: mlx5 and ice reopen their queues when an XDP program appears.
     pin_queue
     log "prepared ${HOOK} ${OBJ:-} ${KERNEL_SETUP:-}"
 }
@@ -156,8 +177,8 @@ prepare() {
 counters() {
     awk '/^Ip: [0-9]/ {print "IpForwDatagrams", $7}' /proc/net/snmp
     awk '$1 == "Ip6OutForwDatagrams" {print "Ip6OutForwDatagrams", $2}' /proc/net/snmp6
-    # Completion interrupts of the RX interface, summed per CPU.
-    grep -E "mlx5_comp[0-9]+@pci:$(pci_of "${RX}")\$" /proc/interrupts |
+    # Queue interrupts of the RX interface, summed per CPU.
+    grep -E "(mlx5_comp[0-9]+@pci:$(pci_of "${RX}")|ice-${RX}-TxRx-[0-9]+)\$" /proc/interrupts |
         awk -v n="$(nproc)" '{for (c = 0; c < n; c++) s[c] += $(c + 2)}
              END {printf "rx_irqs"; for (c = 0; c < n; c++) printf " %d", s[c]; print ""}'
 }
@@ -190,6 +211,8 @@ info() {
     echo "rx_driver: $(ethtool -i "${RX}" | tr '\n' ' ')"
     echo "rx_channels: $(ethtool -l "${RX}" | awk '/Current/{c=1} c && /Combined/{print $2; exit}')"
     echo "irqbalance: $(systemctl is-active irqbalance 2>/dev/null || true)"
+    echo "governor: $(cat "/sys/devices/system/cpu/cpu${RX_CPU}/cpufreq/scaling_governor" 2>/dev/null || echo none)"
+    echo "no_turbo: $(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || echo n/a)"
     echo "bpftool: $(bpftool version | head -1)"
 }
 

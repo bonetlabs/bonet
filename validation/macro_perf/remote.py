@@ -2,16 +2,19 @@
 """Drives the PDR benchmark from this machine; nothing has to be done by hand
 on the TRex or SUT machines.
 
-  ./remote.py setup                  find the testbed (testbed.yaml), install TRex and tools
-  ./remote.py topology               show the links and control path setup would use
-  ./remote.py trex start|stop|status
+  ./remote.py [-t TESTBED] setup     find the testbed (testbeds/TESTBED.yaml), install TRex and tools
+  ./remote.py [-t TESTBED] topology  show the links and control path setup would use
+  ./remote.py [-t TESTBED] trex start|stop|status
   ./remote.py build -p paper         build the objects of a profile (into build/)
-  ./remote.py run -p paper           build, push, check and start a run on TREX
+  ./remote.py [-t TESTBED] run -p paper   build, push, check and start a run on TREX
   ./remote.py status [RUN]           progress of a run (default: the latest)
   ./remote.py fetch [RUN] [--wait]   download a run's data and rebuild the reports
   ./remote.py resume [RUN]           restart a stopped run where it left off
   ./remote.py stop [RUN]
   ./remote.py report [RUN]           rebuild the reports from downloaded data
+
+TESTBED is a file in testbeds/ (default: $BENCH_TESTBED, else fabric). A run
+remembers its testbed, so status, fetch, resume and stop need no -t.
 
 Runs live in results/<run-id>/ here and in <home>/runs/<run-id>/ on the
 machines. The run continues on TREX (in tmux) if this machine disconnects.
@@ -37,6 +40,8 @@ import yaml
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 RESULTS = HERE / "results"
+TESTBEDS = HERE / "testbeds"
+TESTBED = os.environ.get("BENCH_TESTBED", "fabric")  # -t overrides it
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=30", "-o", "ServerAliveInterval=30"]
 TREX_URL = "https://trex-tgn.cisco.com/trex/release/{version}.tar.gz"
 
@@ -68,8 +73,23 @@ def load_profile(name: str) -> Dict[str, Any]:
     return data
 
 
-def testbed() -> Dict[str, Any]:
-    return load_yaml(HERE / "testbed.yaml")
+def testbed_path(name: Optional[str] = None) -> Path:
+    return TESTBEDS / f"{name or TESTBED}.yaml"
+
+
+def testbed(name: Optional[str] = None) -> Dict[str, Any]:
+    path = testbed_path(name)
+    if not path.exists():
+        known = ", ".join(sorted(p.stem for p in TESTBEDS.glob("*.yaml")))
+        raise SystemExit(f"no testbed {path.stem!r} (known: {known}); "
+                         f"./remote.py -t {path.stem} setup creates it")
+    return load_yaml(path)
+
+
+def run_testbed(run_id: str) -> Dict[str, Any]:
+    """The testbed a run was started on (runs from before testbeds/ were on FABRIC)."""
+    plan = json.loads((RESULTS / run_id / "plan.json").read_text())
+    return testbed(plan.get("testbed", "fabric"))
 
 
 def net_settings(tb: Mapping[str, Any]) -> Dict[str, Any]:
@@ -122,21 +142,26 @@ def=$(ip -o route get 1.1.1.1 2>/dev/null | grep -oP "dev \K\S+")
 echo "user $(id -un)"; echo "home $HOME"; echo "nproc $(nproc)"
 for a in $(ip -o addr show dev "$def" scope global | awk '{print $4}'); do echo "mgmt ${a%/*}"; done
 for p in /sys/class/net/*/device; do
-  d=$(basename "$(dirname "$p")"); [ "$d" = "$def" ] && continue
+  d=$(basename "$(dirname "$p")"); [ "$d" = "$def" ] || [ ! -e "$p/numa_node" ] && continue
   ch=$(ethtool -l "$d" 2>/dev/null | awk '/Current/{c=1} c && /Combined/{print $2; exit}')
-  echo "nic $d $(basename "$(readlink -f "$p")") $(cat /sys/class/net/$d/address) ${ch:-1}"
+  echo "nic $d $(basename "$(readlink -f "$p")") $(cat /sys/class/net/$d/address) ${ch:-1} $(cat $p/numa_node)"
 done
+for n in /sys/devices/system/node/node[0-9]*; do echo "node ${n##*node} $(cat $n/cpulist)"; done
 '''
 
 
 def facts(host: str) -> Dict[str, Any]:
-    f: Dict[str, Any] = {"mgmt": [], "nics": {}}
+    f: Dict[str, Any] = {"mgmt": [], "nics": {}, "nodes": {}}
     for line in out(host, FACTS).splitlines():
         key, *rest = line.split()
         if key == "nic":
-            name, pci, mac_addr, channels = rest
+            name, pci, mac_addr, channels, numa = rest
             f["nics"][name] = {"iface": name, "pci": pci.split(":", 1)[1] if pci.count(":") == 2 else pci,
-                               "mac": mac_addr, "channels": int(channels)}
+                               "mac": mac_addr, "channels": int(channels), "numa": max(0, int(numa))}
+        elif key == "node":
+            # The first range of the node's CPUs: its physical cores, before the SMT siblings.
+            lo, _, hi = rest[1].split(",")[0].partition("-")
+            f["nodes"][int(rest[0])] = list(range(int(lo), int(hi or lo) + 1))
         elif key == "mgmt":
             f["mgmt"].append(rest[0])
         else:
@@ -149,8 +174,11 @@ def links(trex: str, sut: str, sut_nics: Mapping[str, Any]) -> List[Tuple[str, s
     all-nodes ping on each TREX port."""
     ssh(sut, "for d in " + " ".join(sut_nics) + "; do sudo ip link set $d up; done")
     by_mac = {n["mac"]: name for name, n in sut_nics.items()}
-    script = ("for d in $(ls /sys/class/net); do [ -e /sys/class/net/$d/device ] || continue; "
-              "sudo ip link set $d up; ping -6 -c2 -W2 ff02::1%$d >/dev/null 2>&1; "
+    # 100G links take a few seconds to come up.
+    script = ("for d in $(ls /sys/class/net); do [ -e /sys/class/net/$d/device ] && "
+              "sudo ip link set $d up; done; sleep 8; "
+              "for d in $(ls /sys/class/net); do [ -e /sys/class/net/$d/device ] || continue; "
+              "ping -6 -c2 -W2 ff02::1%$d >/dev/null 2>&1; "
               "echo $d $(ip -6 neigh show dev $d | grep -oE 'lladdr [0-9a-f:]+' | awk '{print $2}'); done")
     found = []
     for line in out(trex, script).splitlines():
@@ -162,16 +190,17 @@ def links(trex: str, sut: str, sut_nics: Mapping[str, Any]) -> List[Tuple[str, s
 
 
 def discover(existing: Mapping[str, Any]) -> Dict[str, Any]:
-    """The testbed as found on the machines; values already in testbed.yaml
-    are kept."""
+    """The testbed as found on the machines; values already in the testbed
+    file are kept. With one cable, it carries the traffic both ways (the SUT
+    redirects out of the port it received on)."""
     t_ssh = existing.get("trex", {}).get("ssh", "TREX")
     s_ssh = existing.get("sut", {}).get("ssh", "SUT")
     tf, sf = facts(t_ssh), facts(s_ssh)
     cables = sorted((pair for pair in links(t_ssh, s_ssh, sf["nics"]) if pair[0] in tf["nics"]),
                     key=lambda pair: tf["nics"][pair[0]]["pci"])
-    if len(cables) < 2:
-        raise SystemExit(f"found {len(cables)} TREX-SUT links, need 2: {cables}")
-    (t_tx, s_rx), (t_rx, s_tx) = cables[0], cables[1]
+    if not cables:
+        raise SystemExit("found no TREX-SUT link")
+    (t_tx, s_rx), (t_rx, s_tx) = cables[0], cables[min(1, len(cables) - 1)]
 
     # The runner on TREX reaches the SUT over the management network if it
     # can, otherwise over a third link.
@@ -190,14 +219,21 @@ def discover(existing: Mapping[str, Any]) -> Dict[str, Any]:
         control = {"trex_iface": cables[2][0], "sut_iface": cables[2][1],
                    "trex_ip": trex_ip, "sut_ip": sut_ip, "prefix": prefix}
 
-    rx_queue = min(2, sf["nics"][s_rx]["channels"] - 1)
+    # Everything on the NUMA node of the NICs. The SUT's RX queue and CPU have
+    # the same number: XDP_REDIRECT transmits on the queue of the current CPU.
+    socket = tf["nics"][t_tx]["numa"]
+    cores = tf["nodes"][socket]
+    sut_cores = sf["nodes"][sf["nics"][s_rx]["numa"]]
+    rx_queue = min(sut_cores[0] + 2, sf["nics"][s_rx]["channels"] - 1)
     found = {
         "trex": {
             "ssh": t_ssh, "home": f"{tf['home']}/bonet-bench",
             "trex_dir": "/opt/trex/v3.08", "trex_version": "v3.08", "hugepages_2m": 2048,
-            "ports": [{k: tf["nics"][i][k] for k in ("pci", "iface", "mac")} for i in (t_tx, t_rx)],
-            "tx_port": 0, "rx_port": 1, "master_thread": 0, "latency_thread": 1,
-            "threads": list(range(2, tf["nproc"])), "port_bandwidth_gb": 100, "port_mtu": 1500,
+            "ports": [{k: tf["nics"][i][k] for k in ("pci", "iface", "mac")}
+                      for i in dict.fromkeys((t_tx, t_rx))],
+            "tx_port": 0, "rx_port": 0 if t_tx == t_rx else 1, "socket": socket,
+            "master_thread": cores[0], "latency_thread": cores[1],
+            "threads": cores[2:], "port_bandwidth_gb": 100, "port_mtu": 1500,
         },
         "sut": {"ssh": s_ssh, "control": control, "user": sf["user"],
                 "home": f"{sf['home']}/bonet-bench", "rx_queue": rx_queue, "rx_cpu": rx_queue},
@@ -217,7 +253,8 @@ def discover(existing: Mapping[str, Any]) -> Dict[str, Any]:
         out_tb["sut"]["control"] = existing["sut"]["control"]
     print("links (TREX -> SUT):")
     for i, (a, b) in enumerate(cables):
-        role = ["traffic in", "traffic out", "control" if "trex_iface" in control else "unused"][min(i, 2)]
+        role = ["traffic in" + (" and out" if len(cables) == 1 else ""), "traffic out",
+                "control" if "trex_iface" in control else "unused"][min(i, 2)]
         print(f"  {a} ({tf['nics'][a]['pci']}) - {b}   {role}")
     print(f"control: TREX -> {sf['user']}@{out_tb['sut']['control']['sut_ip']}")
     return out_tb
@@ -226,8 +263,9 @@ def discover(existing: Mapping[str, Any]) -> Dict[str, Any]:
 TESTBED_HEADER = """\
 # The machines the benchmark runs on: written by `./remote.py setup` from what
 # it finds on TREX and SUT (the hosts named by trex.ssh and sut.ssh in
-# ~/.ssh/config). Values here are kept on the next setup: edit to override,
-# delete a key (or the file) to have it found again.
+# ~/.ssh/config). Values here are kept: edit to override, and run
+# `./remote.py -t <name> setup --rediscover` to look at the machines again
+# (values still in the file win).
 """
 
 
@@ -236,8 +274,11 @@ def trex_cfg(tb: Mapping[str, Any]) -> str:
     net = tb["network"]
     dests = [net["sut_rx_mac"], net["sut_tx_mac"]]
     ports = [t["ports"][t["tx_port"]], t["ports"][t["rx_port"]]]
+    pcis = [repr(p["pci"]) for p in ports]
+    if t["tx_port"] == t["rx_port"]:
+        pcis[1] = "'dummy'"  # TRex wants ports in pairs; one cable sends and receives
     lines = ["- version: 2",
-             f"  interfaces: [{', '.join(repr(p['pci']) for p in ports)}]",
+             f"  interfaces: [{', '.join(pcis)}]",
              f"  port_bandwidth_gb: {t['port_bandwidth_gb']}",
              f"  port_mtu: {t['port_mtu']}",
              "  port_info:"]
@@ -247,20 +288,30 @@ def trex_cfg(tb: Mapping[str, Any]) -> str:
               f"    master_thread_id: {t['master_thread']}",
               f"    latency_thread_id: {t['latency_thread']}",
               "    dual_if:",
-              "      - socket: 0",
+              f"      - socket: {t.get('socket', 0)}",
               f"        threads: {list(t['threads'])}"]
     return "\n".join(lines) + "\n"
 
 
+def intel_ports(t: Mapping[str, Any]) -> List[str]:
+    return [p["pci"] for p in t["ports"]
+            if out(t["ssh"], f"cat /sys/bus/pci/devices/0000:{p['pci']}/vendor").strip() == "0x8086"]
+
+
 def cmd_setup(args: argparse.Namespace) -> None:
-    path = HERE / "testbed.yaml"
+    path = testbed_path()
     existing = load_yaml(path) if path.exists() else {}
-    if existing.get("trex") and trex_running(existing["trex"]):
-        raise SystemExit("TRex is running and holds its ports: ./remote.py trex stop first")
-    say("discovering the testbed")
-    tb = discover(existing)
-    path.write_text(TESTBED_HEADER + "\n" + yaml.safe_dump(tb, sort_keys=False, width=100))
-    print(f"wrote {path}")
+    if existing.get("trex", {}).get("ports") and not args.rediscover:
+        # Once TRex has run, DPDK may hold the ports, and they cannot be found again.
+        say(f"using {path.name} as it is (--rediscover to look at the machines again)")
+        tb = existing
+    else:
+        if existing.get("trex", {}).get("ports") and trex_running(existing["trex"]):
+            raise SystemExit("TRex is running and holds its ports: ./remote.py trex stop first")
+        say("discovering the testbed")
+        tb = discover(existing)
+        path.write_text(TESTBED_HEADER + "\n" + yaml.safe_dump(tb, sort_keys=False, width=100))
+        print(f"wrote {path}")
     t, s = tb["trex"], tb["sut"]
     apt = "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq"
 
@@ -271,12 +322,28 @@ def cmd_setup(args: argparse.Namespace) -> None:
     ssh(t["ssh"], f"sudo apt-get update -qq && {apt} rdma-core ibverbs-utils tmux rsync "
                   "python3-yaml linux-modules-extra-$(uname -r) >/dev/null && "
                   "sudo modprobe -a mlx5_ib ib_uverbs")
+    if intel_ports(t):
+        # DPDK's ice driver reads the DDP package uncompressed; Ubuntu ships it zstd'ed.
+        say("TREX Intel ports: vfio-pci and the ice DDP package")
+        ssh(t["ssh"], f"{apt} linux-firmware zstd >/dev/null && "
+                      "f=/lib/firmware/intel/ice/ddp/ice.pkg; "
+                      "[ -e $f ] || sudo zstd -dqf $f.zst -o $f; sudo modprobe vfio-pci")
 
     if ssh(t["ssh"], f"test -x {t['trex_dir']}/t-rex-64", check=False).returncode != 0:
         url = TREX_URL.format(version=t["trex_version"])
         say(f"TRex {t['trex_version']}")
         parent = str(Path(t["trex_dir"]).parent)
-        if ssh(t["ssh"], f"curl -fsSL -o /tmp/trex.tgz {url} && sudo mkdir -p {parent} && "
+        # trex-tgn.cisco.com leaves its intermediate CA out of the TLS chain: on
+        # failure, fetch it from the address in the server certificate (it is
+        # signed by a system root, so the download is still verified).
+        host = url.split("/")[2]
+        fetch = (f"curl -fsSL -o /tmp/trex.tgz {url} || {{ "
+                 f"aia=$(echo | openssl s_client -connect {host}:443 -servername {host} 2>/dev/null "
+                 "| openssl x509 -noout -ext authorityInfoAccess | grep -oP 'CA Issuers - URI:\\K\\S+') && "
+                 "curl -fsS \"$aia\" | openssl pkcs7 -inform der -print_certs > /tmp/trex-ca.pem && "
+                 "cat /etc/ssl/certs/ca-certificates.crt /tmp/trex-ca.pem > /tmp/trex-bundle.pem && "
+                 f"curl -fsSL --cacert /tmp/trex-bundle.pem -o /tmp/trex.tgz {url}; }}")
+        if ssh(t["ssh"], f"{fetch} && sudo mkdir -p {parent} && "
                          f"sudo tar -C {parent} -xzf /tmp/trex.tgz && rm /tmp/trex.tgz",
                check=False).returncode != 0:
             raise SystemExit(f"downloading {url} on {t['ssh']} failed: install TRex in "
@@ -284,8 +351,9 @@ def cmd_setup(args: argparse.Namespace) -> None:
 
     say("TRex config and hugepages")
     cfg = shlex.quote(trex_cfg(tb))
+    node = f"/sys/devices/system/node/node{t.get('socket', 0)}/hugepages/hugepages-2048kB"
     ssh(t["ssh"], f"echo {cfg} | sudo tee /etc/trex_cfg.yaml >/dev/null && "
-                  f"echo {t['hugepages_2m']} | sudo tee /proc/sys/vm/nr_hugepages >/dev/null")
+                  f"echo {t['hugepages_2m']} | sudo tee {node}/nr_hugepages >/dev/null")
 
     c = s["control"]
     if "trex_iface" in c:
@@ -304,11 +372,26 @@ def cmd_setup(args: argparse.Namespace) -> None:
 
 
 def cmd_topology(args: argparse.Namespace) -> None:
-    path = HERE / "testbed.yaml"
+    path = testbed_path()
     existing = load_yaml(path) if path.exists() else {}
-    if existing.get("trex") and trex_running(existing["trex"]):
+    if existing.get("trex", {}).get("ports") and trex_running(existing["trex"]):
         raise SystemExit("TRex is running and holds its ports: ./remote.py trex stop first")
     discover({k: {"ssh": v["ssh"]} for k, v in existing.items() if k in ("trex", "sut")})
+
+
+def check_iommu(tb: Mapping[str, Any]) -> None:
+    """Stops when a SUT port goes through IOMMU translation: every redirected
+    packet would be mapped through it, capping all cases at the same rate."""
+    net = tb["network"]
+    script = "; ".join(f"g=/sys/class/net/{i}/device/iommu_group; [ -e $g ] && "
+                       f"echo {i} $(basename $(readlink -f $g)) $(cat $g/type); true"
+                       for i in dict.fromkeys((net["sut_rx_iface"], net["sut_tx_iface"])))
+    bad = [line.split() for line in out(tb["sut"]["ssh"], script).splitlines()
+           if line.split()[-1] != "identity"]
+    if bad:
+        raise SystemExit("SUT ports in IOMMU translation (" +
+                         ", ".join(f"{i}: group {g} {t}" for i, g, t in bad) +
+                         "): set them to passthrough first, see README, Testbed")
 
 
 def trex_running(t: Mapping[str, Any]) -> bool:
@@ -325,7 +408,7 @@ def trex_running(t: Mapping[str, Any]) -> bool:
 def cmd_trex(args: argparse.Namespace) -> None:
     t = testbed()["trex"]
     if args.action == "stop":
-        ssh(t["ssh"], "sudo tmux kill-session -t trex 2>/dev/null; sudo pkill -f _t-rex-64; true")
+        ssh(t["ssh"], "sudo tmux kill-session -t trex 2>/dev/null; sudo pkill -f '[_]t-rex-64'; true")
         return
     if args.action == "status":
         if not trex_running(t):
@@ -335,6 +418,10 @@ def cmd_trex(args: argparse.Namespace) -> None:
     if trex_running(t):
         return
     ssh(t["ssh"], "sudo tmux kill-session -t trex 2>/dev/null; true")
+    for pci in intel_ports(t):
+        # TRex picks vfio-pci only with iommu= on the kernel command line, and
+        # its fallback (uio_pci_generic) cannot work with the IOMMU on.
+        ssh(t["ssh"], f"cd {t['trex_dir']} && sudo ./dpdk_nic_bind.py -b vfio-pci 0000:{pci}")
     ssh(t["ssh"], f"sudo tmux new -d -s trex 'cd {t['trex_dir']} && "
                   "./t-rex-64 -i --no-ofed-check --cfg /etc/trex_cfg.yaml 2>&1 | tee /tmp/trex.log'")
     for _ in range(30):
@@ -448,6 +535,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     t = tb["trex"]
     if not trex_running(t):
         raise SystemExit("TRex server is not running: ./remote.py trex start")
+    check_iommu(tb)
 
     run_id = time.strftime("%Y%m%d-%H%M%S") + f"-{profile['name']}"
     if args.label:
@@ -467,15 +555,19 @@ def cmd_run(args: argparse.Namespace) -> None:
     plan = {
         "run_id": run_id,
         "profile": profile["name"],
+        "testbed": TESTBED,
         "seed": random.SystemRandom().randrange(1 << 30),
         "net": net_settings(tb),
         "trex": {"tx_port": t["tx_port"], "rx_port": t["rx_port"],
                  "api_path": f"{t['trex_dir']}/automation/trex_control_plane/interactive"},
         "sut": {"ssh": f"{tb['sut']['user']}@{tb['sut']['control']['sut_ip']}", "dir": dirs["sut"],
-                "rx_queue": tb["sut"]["rx_queue"], "rx_cpu": tb["sut"]["rx_cpu"]},
+                "rx_queue": tb["sut"]["rx_queue"], "rx_cpu": tb["sut"]["rx_cpu"],
+                "fixed_cpu_freq": bool(tb["sut"].get("fixed_cpu_freq", False))},
         "method": profile.get("method", "pdr"),
-        "pdr": profile["pdr"],
-        "runtime": profile.get("runtime"),
+        # A testbed much faster or slower than the profile's range sets its own
+        # (pdr:, runtime: in its file).
+        "pdr": {**profile["pdr"], **tb.get("pdr", {})},
+        "runtime": profile.get("runtime") and {**profile["runtime"], **tb.get("runtime", {})},
         "check": profile["check"],
         "cases": profile["cases"],
         "baseline_case": profile.get("baseline_case"),
@@ -528,8 +620,8 @@ def runner_alive(tb: Mapping[str, Any], run_id: str) -> bool:
 
 
 def cmd_status(args: argparse.Namespace) -> None:
-    tb = testbed()
     run_id = resolve_run(args.run)
+    tb = run_testbed(run_id)
     p = remote_progress(tb, run_id)
     alive = runner_alive(tb, run_id)
     eta = p.get("eta_s")
@@ -557,8 +649,8 @@ def fetch(tb: Mapping[str, Any], run_id: str) -> None:
 
 
 def cmd_fetch(args: argparse.Namespace) -> None:
-    tb = testbed()
     run_id = resolve_run(args.run)
+    tb = run_testbed(run_id)
     while True:
         fetch(tb, run_id)
         report(run_id)
@@ -576,18 +668,19 @@ def cmd_fetch(args: argparse.Namespace) -> None:
 
 
 def cmd_resume(args: argparse.Namespace) -> None:
-    tb = testbed()
     run_id = resolve_run(args.run)
+    tb = run_testbed(run_id)
     if runner_alive(tb, run_id):
         raise SystemExit(f"{run_id} is still running")
     if not trex_running(tb["trex"]):
         raise SystemExit("TRex server is not running: ./remote.py trex start")
+    check_iommu(tb)
     start_runner(tb, run_id)
 
 
 def cmd_stop(args: argparse.Namespace) -> None:
-    tb = testbed()
     run_id = resolve_run(args.run)
+    tb = run_testbed(run_id)
     ssh(tb["trex"]["ssh"], f"tmux send-keys -t bench-{run_id} C-c 2>/dev/null; true")
     print(f"sent interrupt to bench-{run_id}; it cleans the SUT before exiting")
 
@@ -609,8 +702,13 @@ def cmd_report(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-t", "--testbed", default=TESTBED,
+                        help="testbeds/<name>.yaml (default: $BENCH_TESTBED, else fabric)")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("setup").set_defaults(func=cmd_setup)
+    p = sub.add_parser("setup")
+    p.add_argument("--rediscover", action="store_true",
+                   help="look at the machines again even if the testbed file has ports")
+    p.set_defaults(func=cmd_setup)
     sub.add_parser("topology").set_defaults(func=cmd_topology)
     p = sub.add_parser("trex")
     p.add_argument("action", choices=["start", "stop", "status"])
@@ -643,6 +741,7 @@ def main() -> None:
     p.add_argument("--all", action="store_true", help="only rebuild the cumulative report")
     p.set_defaults(func=cmd_report)
     args = parser.parse_args()
+    globals()["TESTBED"] = args.testbed
     args.func(args)
 
 

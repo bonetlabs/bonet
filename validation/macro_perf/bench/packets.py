@@ -190,7 +190,9 @@ def is_forwarded(frame: bytes, net: Mapping) -> bool:
     if ethertype == ETH_P_IP:
         return len(frame) >= 34 and frame[23] == socket.IPPROTO_UDP
     if ethertype == ETH_P_IPV6:
-        return len(frame) >= 54 and frame[20] in (socket.IPPROTO_UDP, socket.IPPROTO_IPV6)
+        # UDP, or an encapsulation: ip6ip6, or SRv6 (the routing header first).
+        return len(frame) >= 54 and frame[20] in (socket.IPPROTO_UDP, socket.IPPROTO_IPV6,
+                                                  socket.IPPROTO_ROUTING)
     return False
 
 

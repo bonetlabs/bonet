@@ -107,6 +107,7 @@ def sut_env(case: str, experiment: Mapping[str, Any]) -> Dict[str, str]:
         "TG_RX_IPV4": net["tg_rx_ipv4"], "TG_RX_IPV6": net["tg_rx_ipv6"],
         "TG_RX_MAC": net["tg_rx_mac"],
         "RX_QUEUE": sut["rx_queue"], "RX_CPU": sut["rx_cpu"],
+        "FIXED_CPU_FREQ": int(sut.get("fixed_cpu_freq", False)),
         "HOOK": hook,
         "OBJ": f"{sut['dir']}/{experiment['objects'][case]}" if hook != "kernel" else "",
         "KERNEL_SETUP": experiment.get("kernel", "") if hook == "kernel" else "",
@@ -172,6 +173,11 @@ def ports() -> Tuple[int, int]:
     return int(PLAN["trex"]["tx_port"]), int(PLAN["trex"]["rx_port"])
 
 
+def both() -> List[int]:
+    """The ports in use, once each (one port when a single cable carries both ways)."""
+    return sorted(set(ports()))
+
+
 def stats_packets(stats: Mapping[Any, Any], port: int, key: str) -> int:
     entry = stats.get(port, stats.get(str(port)))
     return int(entry[key])
@@ -180,33 +186,36 @@ def stats_packets(stats: Mapping[Any, Any], port: int, key: str) -> int:
 def trial(pcap: Path, rate_pps: float, duration: float) -> Tuple[int, int]:
     c = client()
     tx, rx = ports()
-    c.reset(ports=[tx, rx])
+    c.reset(ports=both())
     c.add_streams([API.STLStream(packet=API.STLPktBuilder(pkt=str(pcap)),
                                  mode=API.STLTXCont())], ports=[tx])
     c.clear_stats()
     c.start(ports=[tx], mult=f"{rate_pps:.3f}pps", duration=duration)
-    c.wait_on_traffic(ports=[tx, rx])
+    c.wait_on_traffic(ports=both())
     time.sleep(1.0)  # let the last packets and counters arrive
-    stats = c.get_stats(ports=[tx, rx])
+    stats = c.get_stats(ports=both())
     return stats_packets(stats, tx, "opackets"), stats_packets(stats, rx, "ipackets")
 
 
 def capture_burst(pcap: Path, count: int, pps: float) -> List[bytes]:
     c = client()
     tx, rx = ports()
-    c.reset(ports=[tx, rx])
+    c.reset(ports=both())
     c.set_service_mode(ports=[rx], enabled=True)
     try:
         cap = c.start_capture(rx_ports=[rx], limit=max(1000, 4 * count))
         c.add_streams([API.STLStream(packet=API.STLPktBuilder(pkt=str(pcap)),
                                      mode=API.STLTXSingleBurst(total_pkts=count, pps=pps))],
                       ports=[tx])
-        c.start(ports=[tx])
+        # One cable: the port that sends is the one in service mode.
+        c.start(ports=[tx], force=tx == rx)
         c.wait_on_traffic(ports=[tx])
         time.sleep(1.0)
         out: List[Dict[str, Any]] = []
         c.stop_capture(cap["id"], output=out)
     finally:
+        # A capture left open (start failed) would block this and hide the error.
+        c.remove_all_captures()
         c.set_service_mode(ports=[rx], enabled=False)
     return [bytes(pkt["binary"]) for pkt in out]
 

@@ -1,0 +1,9 @@
+# runtime.yaml on the SRv6 encapsulation (xdp_srv6_encap: outer IPv6 with an
+# SRH of one segment, fd07::1), with IPv4 and IPv6 inside. There is no model of
+# its output: the check only sees the packets come back through XDP.
+
+include: runtime.yaml
+
+experiments:
+  - {name: SRV6,  program: srv6_encap, traffic: ipv4, traffic_dst_ipv4: 10.100.0.1}
+  - {name: SRV6v6, program: srv6_encap, traffic: ipv6}
