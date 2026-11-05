@@ -60,8 +60,9 @@ the cases of `cases.py`: a corpus of packets, each cut at every length, plus
 NULL pointers, out-of-range offsets and boundary arguments. `model.py` gives
 the expected result from the protocols, not from the C code; a call that fails
 must leave the packet unchanged. `check.py report` lists the failing cases.
-`make -C api coverage` reports branch coverage, on the interpreter of
-`validation/exec_metrics`.
+`make -C api coverage` reports the branch coverage of the library's C code, on
+the interpreter of `validation/exec_metrics` (`LLVM_DWARFDUMP` names the
+`llvm-dwarfdump` to use).
 
 ## Configuration
 

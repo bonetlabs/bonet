@@ -1,6 +1,8 @@
 CLANG   ?= $(shell command -v clang 2>/dev/null || printf clang)
 HOST_CC ?= $(CLANG)
 PYTHON  ?= python3
+LLVM_DWARFDUMP ?= llvm-dwarfdump
+export LLVM_DWARFDUMP
 ARCH    ?= x86
 SYSINC  ?= /usr/include/$(shell uname -m)-linux-gnu
 ROOT    ?= ../..
@@ -40,8 +42,17 @@ check: all
 	$(PYTHON) check.py run $(BUILD) $(BUILD)/results
 	$(PYTHON) check.py report $(BUILD) $(BUILD)/results
 
-# Branch coverage of the cases, with the interpreter (no root needed).
-coverage: objs
+# Branch coverage of the library's C code by the cases, on the interpreter (no
+# root needed). The programs are built from the C globals at -O1, with a stack
+# limit only the interpreter accepts.
+COV_CFLAGS := $(filter-out -O2,$(BPF_CFLAGS)) -O1 -DBNT_ASM_GLOBALS=0 -mllvm -bpf-stack-size=65536
+
+$(BUILD)/cov/%.o: $(BUILD)/gen/%.c api_io.h $(BNT_HEADERS)
+	@mkdir -p $(BUILD)/cov
+	$(CLANG) $(COV_CFLAGS) -c $< -o $@
+
+coverage: $(BUILD)/gen/apis.json
+	@$(MAKE) --no-print-directory $(patsubst $(BUILD)/gen/%.c,$(BUILD)/cov/%.o,$(wildcard $(BUILD)/gen/*.c))
 	$(PYTHON) coverage.py $(BUILD)
 
 clean:
