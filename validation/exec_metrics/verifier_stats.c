@@ -171,6 +171,20 @@ static void one(const char *path, const char *name)
             s = e + 1;
         }
     }
+    /* 7.3 prints "stack depth max N" and one "subprog I (name) ... stack N" per function */
+    for (s = ndepth ? NULL : logbuf; s && (s = strstr(s, "\nsubprog ")); ) {
+        unsigned int i;
+        char *st, *nl;
+
+        s++;
+        st = strstr(s, " stack ");
+        nl = strchr(s, '\n');
+        if (sscanf(s, "subprog %u ", &i) == 1 && i < MAX_FUNCS && st && (!nl || st < nl)) {
+            depth[i] = strtoul(st + 7, NULL, 10);
+            if (i + 1 > (unsigned int)ndepth)
+                ndepth = i + 1;
+        }
+    }
 
     /* Ask once for the counts, then for the per-function records. */
     memset(&info, 0, sizeof(info));
