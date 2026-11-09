@@ -29,7 +29,7 @@ STYLE = {
 }
 plt.rcParams.update({
     "font.family": "sans-serif", "font.sans-serif": ["Nimbus Sans", "TeX Gyre Heros", "Liberation Sans"],
-    "font.size": 8, "text.color": TEXT, "axes.labelcolor": TEXT, "xtick.color": TEXT, "ytick.color": TEXT,
+    "font.size": 7, "text.color": TEXT, "axes.labelcolor": TEXT, "xtick.color": TEXT, "ytick.color": TEXT,
     "axes.edgecolor": AXIS, "axes.linewidth": 0.8, "xtick.major.size": 0, "ytick.major.size": 0,
     "ytick.major.pad": 3, "hatch.linewidth": 0.5, "pdf.fonttype": 42, "ps.fonttype": 42,
 })
@@ -75,12 +75,13 @@ def loc(path):
             "bonet": [by_file[f"framework/{OBJ[w]}"] for w in WL]}
 
 
-def bars(ax, series, ylabel, scale=1.0):
-    """series: (style key, values, ci or None); the bars of a group touch."""
-    width = 0.8 / len(series)
+def bars(ax, series, ylabel=None, scale=1.0, width=None):
+    """series: (style key, values, ci or None); the bars of a group touch and fill 0.8 of it,
+    unless width is given."""
+    width = width or 0.8 / len(series)
     for j, (key, vals, ci) in enumerate(series):
         st = STYLE[key]
-        x = [i - 0.4 + (j + 0.5) * width for i in range(len(WL))]
+        x = [i + (j - (len(series) - 1) / 2) * width for i in range(len(WL))]
         y = [v / scale for v in vals]
         ax.bar(x, y, width, color=st["fc"], edgecolor=EDGE, hatch=st["hatch"], hatchcolor=st["hc"],
                lw=0.6, zorder=2)
@@ -89,43 +90,56 @@ def bars(ax, series, ylabel, scale=1.0):
                         elinewidth=0.7, capsize=1.8, capthick=0.7, zorder=3)
     ax.set_xlim(-0.5, len(WL) - 0.5)
     ax.set_xticks(range(len(WL)), WL)
-    ax.set_ylabel(ylabel)
+    if ylabel:
+        ax.set_ylabel(ylabel)
     ax.margins(y=0.08)
     ax.set_ylim(bottom=0)
     ax.grid(axis="y", color=GRID, lw=0.6, zorder=0)
     ax.set_axisbelow(True)
-    for s in ("top", "right", "left"):
-        ax.spines[s].set_visible(False)
 
 
 def legend(fig, keys):
+    """Centered on the boxes (on the pair, with two), not on the figure: call it after margins()."""
+    x = (min(a.get_position().x0 for a in fig.axes) + max(a.get_position().x1 for a in fig.axes)) / 2
     handles = [Patch(fc=STYLE[k]["fc"], ec=EDGE, hatch=STYLE[k]["hatch"], hatchcolor=STYLE[k]["hc"],
                      lw=0.6, label=STYLE[k]["label"]) for k in keys]
     fig.legend(handles=handles, loc="upper center", ncol=len(keys), frameon=False,
                handlelength=1.1, handleheight=1.1, handletextpad=0.5, columnspacing=1.4,
-               bbox_to_anchor=(0.5, 1.0))
+               bbox_to_anchor=(x, 1.0))
+
+
+def margins(fig, bottom, top, **kw):
+    """Margins in inches: every figure keeps its exact size, so at the same LaTeX width they all scale alike.
+    The left one is just wide enough for the y labels of the first box, measured once drawn."""
+    w, h = fig.get_size_inches()
+    fig.subplots_adjust(left=0.5 / w, right=1 - 0.03 / w, bottom=bottom / h, top=1 - top / h, **kw)
+    ax = fig.axes[0]
+    labels = ax.get_position().x0 * w - ax.get_tightbbox(fig.canvas.get_renderer()).x0 / fig.dpi
+    fig.subplots_adjust(left=(labels + 0.02) / w)
 
 
 def save(fig, out, name):
     for ext in ("pdf", "png"):
-        fig.savefig(out / f"{name}.{ext}", dpi=300, bbox_inches="tight", pad_inches=0.02)
+        fig.savefig(out / f"{name}.{ext}", dpi=300)
     plt.close(fig)
 
 
 def single(out, name, data, keys, ylabel, scale=1.0):
     fig, ax = plt.subplots(figsize=(3.5, 1.75))
-    fig.subplots_adjust(top=0.85)
-    bars(ax, [(k, *data[k]) for k in keys], ylabel, scale)
+    # The PDR's four bars per group set the width, so the figures drawn next to it match.
+    bars(ax, [(k, *data[k]) for k in keys], ylabel, scale, width=0.2)
+    margins(fig, bottom=0.2, top=0.26)
     legend(fig, keys)
     save(fig, out, name)
 
 
 def pair(out, name, keys, left, right):
     fig, axes = plt.subplots(1, 2, figsize=(3.5, 1.6))
-    fig.subplots_adjust(top=0.84, wspace=0.5)
-    for ax, (data, ylabel) in zip(axes, (left, right)):
-        bars(ax, [(k, data[k], None) for k in keys], ylabel)
-        ax.tick_params(axis="x", labelsize=7)
+    # The metric names each panel from above: a rotated y label would take a third of its width.
+    for ax, (data, title) in zip(axes, (left, right)):
+        bars(ax, [(k, data[k], None) for k in keys])
+        ax.set_title(title, fontsize=7, pad=3)
+    margins(fig, bottom=0.2, top=0.38, wspace=0.25)
     legend(fig, keys)
     save(fig, out, name)
 
@@ -142,17 +156,17 @@ def main():
     a.out.mkdir(parents=True, exist_ok=True)
 
     if a.pdr:
-        single(a.out, "pdr", summary(a.pdr), ["plain", "inline", "bonet", "kernel"], "PDR (Mpps)", 1e6)
+        single(a.out, "pdr_wide", summary(a.pdr), ["plain", "inline", "bonet", "kernel"], "PDR (Mpps)", 1e6)
     if a.runtime:
         single(a.out, "time-per-packet", summary(a.runtime), ["plain", "inline", "bonet"],
                "Time per packet (ns)")
     if a.verifier:
         insns, stack = verifier(a.verifier)
-        pair(a.out, "verifier", ["plain", "inline", "bonet"],
+        pair(a.out, "verifier-final-abs", ["plain", "inline", "bonet"],
              (insns, "Verifier instructions"), (stack, "Stack depth (B)"))
     if a.cognitive and a.loc:
         # Inline and global builds share the source: one BONet bar.
-        pair(a.out, "complexity", ["plain", "bonet"],
+        pair(a.out, "cc_loc_half", ["plain", "bonet"],
              (cognitive(a.cognitive), "Cognitive complexity"), (loc(a.loc), "Lines of code"))
 
 

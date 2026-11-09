@@ -8,10 +8,10 @@ figures read without color. Each figure is written as PDF and PNG to
 
 | figure | option | input |
 |---|---|---|
-| `pdr` | `--pdr` | `report/summary.csv` of a `macro_perf` run with `-p paper` |
+| `pdr_wide` | `--pdr` | `report/summary.csv` of a `macro_perf` run with `-p paper` |
 | `time-per-packet` | `--runtime` | `report/summary.csv` of a `macro_perf` run with `-p runtime` |
-| `verifier` | `--verifier` | directory written by `verifier_logs.sh` |
-| `complexity` | `--cognitive`, `--loc` | `softeng_perf/cognitive.py`'s `cognitive.csv` and `cloc` |
+| `verifier-final-abs` | `--verifier` | directory written by `verifier_logs.sh` |
+| `cc_loc_half` | `--cognitive`, `--loc` | `softeng_perf/cognitive.py`'s `cognitive.csv` and `cloc` |
 
 Each option is independent: only the figures whose inputs are given are drawn.
 
